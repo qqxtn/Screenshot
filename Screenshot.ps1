@@ -274,13 +274,14 @@ public sealed class CapturePreview : Form {
         int imageAreaHeight = previewImage.Height;
         int windowWidth = Math.Max(imageAreaWidth, totalWidth + 24);
         int previewWidth = windowWidth + borderSize * 2;
-        int previewHeight = imageAreaHeight + toolbarHeight + borderSize * 2;
+        int frameHeight = imageAreaHeight + borderSize * 2;
+        int previewHeight = frameHeight + toolbarHeight;
         int contentLeft = Math.Max(8, Math.Min(location.X - Bounds.Left, Width - previewWidth - 8));
         int contentTop = Math.Max(8, Math.Min(location.Y - Bounds.Top, Height - previewHeight - 8));
 
         Panel container = new Panel();
         container.BackColor = Color.FromArgb(245, 248, 252);
-        container.Bounds = new Rectangle(contentLeft, contentTop, previewWidth, previewHeight);
+        container.Bounds = new Rectangle(contentLeft, contentTop, previewWidth, frameHeight);
         container.Paint += delegate(object sender, PaintEventArgs e) {
             using (Pen border = new Pen(Color.FromArgb(96, 165, 250))) {
                 e.Graphics.DrawRectangle(border, 0, 0, container.Width - 1, container.Height - 1);
@@ -301,14 +302,9 @@ public sealed class CapturePreview : Form {
         imageFrame.Controls.Add(picture);
 
         Panel bar = new Panel();
-        bar.BackColor = Color.FromArgb(248, 250, 252);
-        bar.Bounds = new Rectangle(borderSize, imageAreaHeight + borderSize, windowWidth, toolbarHeight);
-        bar.Paint += delegate(object sender, PaintEventArgs e) {
-            using (Pen pen = new Pen(Color.FromArgb(222, 230, 239))) {
-                e.Graphics.DrawLine(pen, 0, 0, bar.Width, 0);
-            }
-        };
-        container.Controls.Add(bar);
+        bar.BackColor = Color.Transparent;
+        bar.Bounds = new Rectangle(contentLeft + borderSize, contentTop + frameHeight, windowWidth, toolbarHeight);
+        Controls.Add(bar);
 
         int left = Math.Max(12, windowWidth - totalWidth - 12);
 
@@ -408,6 +404,8 @@ public sealed class PrettyButton : Button {
     public PrettyButton() {
         FlatStyle = FlatStyle.Flat;
         FlatAppearance.BorderSize = 0;
+        FlatAppearance.MouseDownBackColor = Color.Transparent;
+        FlatAppearance.MouseOverBackColor = Color.Transparent;
         BackColor = Color.Transparent;
         Cursor = Cursors.Hand;
         TabStop = false;
