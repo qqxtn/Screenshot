@@ -40,6 +40,48 @@ public static class HotkeyNative {
 
     [DllImport("user32.dll")]
     public static extern sbyte GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetParent(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(int X, int Y);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(uint dwFlags, int dx, int dy, int dwData, UIntPtr dwExtraInfo);
+
+    public const byte VK_NEXT = 0x22;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
+    public const uint MOUSEEVENTF_WHEEL = 0x0800;
+    public const uint WM_MOUSEWHEEL = 0x020A;
+    public const uint WM_VSCROLL = 0x0115;
+    public const uint GA_ROOT = 2;
+    public const int SB_LINEDOWN = 1;
+    public const int SB_PAGEDOWN = 3;
+
+    public static IntPtr MakeLParam(int low, int high) {
+        return new IntPtr((high << 16) | (low & 0xffff));
+    }
+
+    public static IntPtr MakeWheelWParam(int delta) {
+        return new IntPtr(delta << 16);
+    }
+
 }
 
 public sealed class ScreenSelector : Form {
@@ -54,6 +96,7 @@ public sealed class ScreenSelector : Form {
 
     public string SavedPath { get; private set; }
     public string CapturePath { get; private set; }
+    public Rectangle CaptureBounds { get; private set; }
     public Point PreviewLocation { get; private set; }
 
     public ScreenSelector(string outputDir) {
@@ -189,6 +232,7 @@ public sealed class ScreenSelector : Form {
 
     private void SetFinalSelection(Rectangle selection) {
         finalSelection = selection;
+        CaptureBounds = new Rectangle(virtualScreen.Left + selection.Left, virtualScreen.Top + selection.Top, selection.Width, selection.Height);
 
         if (selectedImage != null) {
             selectedImage.Dispose();
@@ -235,22 +279,36 @@ public sealed class ScreenSelector : Form {
 public sealed class CapturePreview : Form {
     private readonly string imagePath;
     private readonly string outputDir;
-    private readonly Image previewImage;
+    private readonly Bitmap previewImage;
     private readonly Bitmap backgroundImage;
     private readonly int borderSize = 1;
     private readonly int toolbarHeight = 54;
     private readonly Point previewLocation;
+    private readonly bool showLongButton;
+    private readonly double previewScale;
+    private PictureBox picture;
+    private Panel colorPalette;
+    private string drawMode;
+    private Color drawColor = Color.FromArgb(239, 68, 68);
+    private bool drawing;
+    private Point drawStart;
+    private Point drawCurrent;
 
     public bool ExtractTextRequested { get; private set; }
+    public bool LongScreenshotRequested { get; private set; }
 
     public string SavedPath { get; private set; }
 
-    public CapturePreview(string imagePath, string outputDir, Point location) {
+    public CapturePreview(string imagePath, string outputDir, Point location) : this(imagePath, outputDir, location, true) {
+    }
+
+    public CapturePreview(string imagePath, string outputDir, Point location, bool showLongButton) {
         this.imagePath = imagePath;
         this.outputDir = outputDir;
         this.previewLocation = location;
+        this.showLongButton = showLongButton;
         using (Image loaded = Image.FromFile(imagePath)) {
-            this.previewImage = (Image)loaded.Clone();
+            this.previewImage = new Bitmap(loaded);
         }
         Rectangle screen = SystemInformation.VirtualScreen;
         this.backgroundImage = new Bitmap(screen.Width, screen.Height);
@@ -268,11 +326,16 @@ public sealed class CapturePreview : Form {
         Bounds = SystemInformation.VirtualScreen;
         int buttonWidth = 42;
         int buttonHeight = 34;
-        int gap = 10;
-        int totalWidth = buttonWidth * 4 + gap * 3;
-        int imageAreaWidth = previewImage.Width;
-        int imageAreaHeight = previewImage.Height;
-        int windowWidth = Math.Max(imageAreaWidth, totalWidth + 24);
+        int gap = 6;
+        int buttonCount = showLongButton ? 7 : 6;
+        int totalWidth = buttonWidth * buttonCount + gap * (buttonCount - 1);
+        int maxPreviewWidth = Math.Max(120, screen.Width - 32 - borderSize * 2);
+        int maxPreviewHeight = Math.Max(120, screen.Height - toolbarHeight - 32 - borderSize * 2);
+        double scale = Math.Min(1.0, Math.Min((double)maxPreviewWidth / previewImage.Width, (double)maxPreviewHeight / previewImage.Height));
+        this.previewScale = scale;
+        int imageAreaWidth = Math.Max(1, (int)Math.Round(previewImage.Width * scale));
+        int imageAreaHeight = Math.Max(1, (int)Math.Round(previewImage.Height * scale));
+        int windowWidth = Math.Max(imageAreaWidth, totalWidth + 20);
         int previewWidth = windowWidth + borderSize * 2;
         int frameHeight = imageAreaHeight + borderSize * 2;
         int previewHeight = frameHeight + toolbarHeight;
@@ -294,11 +357,15 @@ public sealed class CapturePreview : Form {
         imageFrame.Bounds = new Rectangle(borderSize + (windowWidth - imageAreaWidth) / 2, borderSize, imageAreaWidth, imageAreaHeight);
         container.Controls.Add(imageFrame);
 
-        PictureBox picture = new PictureBox();
+        picture = new PictureBox();
         picture.Image = previewImage;
-        picture.SizeMode = PictureBoxSizeMode.Normal;
+        picture.SizeMode = scale < 1.0 ? PictureBoxSizeMode.Zoom : PictureBoxSizeMode.Normal;
         picture.BackColor = Color.White;
-        picture.Bounds = new Rectangle(0, 0, previewImage.Width, previewImage.Height);
+        picture.Bounds = new Rectangle(0, 0, imageAreaWidth, imageAreaHeight);
+        picture.MouseDown += PictureMouseDown;
+        picture.MouseMove += PictureMouseMove;
+        picture.MouseUp += PictureMouseUp;
+        picture.Paint += PicturePaint;
         imageFrame.Controls.Add(picture);
 
         Panel bar = new Panel();
@@ -306,28 +373,50 @@ public sealed class CapturePreview : Form {
         bar.Bounds = new Rectangle(contentLeft + borderSize, contentTop + frameHeight, windowWidth, toolbarHeight);
         Controls.Add(bar);
 
-        int left = Math.Max(12, windowWidth - totalWidth - 12);
+        int left = Math.Max(10, windowWidth - totalWidth - 10);
 
-        AddButton(bar, "ocr", left, buttonWidth, buttonHeight, "Extract text", delegate {
+        AddButton(bar, "rect", left, buttonWidth, buttonHeight, "Rectangle", delegate {
+            drawMode = drawMode == "rect" ? null : "rect";
+            ShowColorPalette(bar, left, buttonWidth);
+        });
+
+        AddButton(bar, "ellipse", left + buttonWidth + gap, buttonWidth, buttonHeight, "Ellipse", delegate {
+            drawMode = drawMode == "ellipse" ? null : "ellipse";
+            ShowColorPalette(bar, left + buttonWidth + gap, buttonWidth);
+        });
+
+        AddButton(bar, "ocr", left + (buttonWidth + gap) * 2, buttonWidth, buttonHeight, "Extract text", delegate {
             ExtractTextRequested = true;
             DialogResult = DialogResult.Retry;
             Close();
         });
 
-        AddButton(bar, "save", left + buttonWidth + gap, buttonWidth, buttonHeight, "Save to local", delegate {
+        int index = 3;
+        if (showLongButton) {
+            AddButton(bar, "long", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Long screenshot", delegate {
+                LongScreenshotRequested = true;
+                DialogResult = DialogResult.Ignore;
+                Close();
+            });
+            index++;
+        }
+
+        AddButton(bar, "save", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Save to local", delegate {
             SaveImage();
             if (!String.IsNullOrEmpty(SavedPath)) {
                 DialogResult = DialogResult.Yes;
                 Close();
             }
         });
+        index++;
 
-        AddButton(bar, "cancel", left + (buttonWidth + gap) * 2, buttonWidth, buttonHeight, "Cancel", delegate {
+        AddButton(bar, "cancel", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Cancel", delegate {
             DialogResult = DialogResult.Cancel;
             Close();
         });
+        index++;
 
-        AddButton(bar, "done", left + (buttonWidth + gap) * 3, buttonWidth, buttonHeight, "Done", delegate {
+        AddButton(bar, "done", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Done", delegate {
             CopyImage();
             DialogResult = DialogResult.OK;
             Close();
@@ -369,8 +458,167 @@ public sealed class CapturePreview : Form {
         parent.Controls.Add(button);
     }
 
+    private void ShowColorPalette(Control bar, int anchorLeft, int anchorWidth) {
+        if (String.IsNullOrEmpty(drawMode)) {
+            HideColorPalette();
+            return;
+        }
+
+        if (colorPalette != null) {
+            colorPalette.Dispose();
+            colorPalette = null;
+        }
+
+        colorPalette = new Panel();
+        colorPalette.BackColor = Color.White;
+        colorPalette.Width = 34;
+        colorPalette.Height = 184;
+        int left = Math.Max(0, Math.Min(anchorLeft + (anchorWidth - colorPalette.Width) / 2, bar.Width - colorPalette.Width));
+        Point screenPoint = bar.PointToScreen(new Point(left, 10 - colorPalette.Height - 4));
+        colorPalette.Location = PointToClient(screenPoint);
+        colorPalette.Paint += delegate(object sender, PaintEventArgs e) {
+            using (Pen pen = new Pen(Color.FromArgb(203, 213, 225))) {
+                e.Graphics.DrawRectangle(pen, 0, 0, colorPalette.Width - 1, colorPalette.Height - 1);
+            }
+        };
+
+        AddColorChoice(colorPalette, Color.FromArgb(239, 68, 68), 6);
+        AddColorChoice(colorPalette, Color.FromArgb(245, 158, 11), 35);
+        AddColorChoice(colorPalette, Color.FromArgb(34, 197, 94), 64);
+        AddColorChoice(colorPalette, Color.FromArgb(59, 130, 246), 93);
+        AddColorChoice(colorPalette, Color.FromArgb(168, 85, 247), 122);
+        AddColorChoice(colorPalette, Color.FromArgb(17, 24, 39), 151);
+
+        Controls.Add(colorPalette);
+        colorPalette.BringToFront();
+    }
+
+    private void HideColorPalette() {
+        if (colorPalette != null) {
+            colorPalette.Dispose();
+            colorPalette = null;
+        }
+    }
+
+    private void AddColorChoice(Control parent, Color color, int top) {
+        ColorButton button = new ColorButton();
+        button.SwatchColor = color;
+        button.Bounds = new Rectangle(5, top, 24, 24);
+        button.Click += delegate {
+            drawColor = color;
+            HideColorPalette();
+        };
+        parent.Controls.Add(button);
+    }
+
     private void CopyImage() {
         Clipboard.SetImage((Image)previewImage.Clone());
+    }
+
+    private void PictureMouseDown(object sender, MouseEventArgs e) {
+        if (String.IsNullOrEmpty(drawMode) || e.Button != MouseButtons.Left) {
+            return;
+        }
+
+        drawing = true;
+        drawStart = ClampPreviewPoint(e.Location);
+        drawCurrent = drawStart;
+        picture.Invalidate();
+    }
+
+    private void PictureMouseMove(object sender, MouseEventArgs e) {
+        if (!drawing) {
+            return;
+        }
+
+        drawCurrent = ClampPreviewPoint(e.Location);
+        picture.Invalidate();
+    }
+
+    private void PictureMouseUp(object sender, MouseEventArgs e) {
+        if (!drawing || e.Button != MouseButtons.Left) {
+            return;
+        }
+
+        drawing = false;
+        drawCurrent = ClampPreviewPoint(e.Location);
+        CommitShape();
+        picture.Invalidate();
+    }
+
+    private void PicturePaint(object sender, PaintEventArgs e) {
+        if (!drawing || String.IsNullOrEmpty(drawMode)) {
+            return;
+        }
+
+        Rectangle rect = GetPreviewRectangle(drawStart, drawCurrent);
+        if (rect.Width < 2 || rect.Height < 2) {
+            return;
+        }
+
+        e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using (Pen pen = new Pen(drawColor, 2)) {
+            if (drawMode == "ellipse") {
+                e.Graphics.DrawEllipse(pen, rect);
+            }
+            else {
+                e.Graphics.DrawRectangle(pen, rect);
+            }
+        }
+    }
+
+    private void CommitShape() {
+        Rectangle previewRect = GetPreviewRectangle(drawStart, drawCurrent);
+        if (previewRect.Width < 3 || previewRect.Height < 3) {
+            return;
+        }
+
+        Rectangle imageRect = PreviewToImageRectangle(previewRect);
+        if (imageRect.Width < 2 || imageRect.Height < 2) {
+            return;
+        }
+
+        using (Graphics g = Graphics.FromImage(previewImage)) {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            int stroke = Math.Max(2, (int)Math.Round(3.0 / Math.Max(0.25, previewScale)));
+            using (Pen pen = new Pen(drawColor, stroke)) {
+                if (drawMode == "ellipse") {
+                    g.DrawEllipse(pen, imageRect);
+                }
+                else {
+                    g.DrawRectangle(pen, imageRect);
+                }
+            }
+        }
+
+        picture.Image = previewImage;
+    }
+
+    private Point ClampPreviewPoint(Point point) {
+        int x = Math.Max(0, Math.Min(picture.Width - 1, point.X));
+        int y = Math.Max(0, Math.Min(picture.Height - 1, point.Y));
+        return new Point(x, y);
+    }
+
+    private Rectangle GetPreviewRectangle(Point a, Point b) {
+        int x = Math.Min(a.X, b.X);
+        int y = Math.Min(a.Y, b.Y);
+        int width = Math.Abs(a.X - b.X);
+        int height = Math.Abs(a.Y - b.Y);
+        return new Rectangle(x, y, width, height);
+    }
+
+    private Rectangle PreviewToImageRectangle(Rectangle rect) {
+        int x = (int)Math.Round(rect.X / previewScale);
+        int y = (int)Math.Round(rect.Y / previewScale);
+        int width = (int)Math.Round(rect.Width / previewScale);
+        int height = (int)Math.Round(rect.Height / previewScale);
+
+        x = Math.Max(0, Math.Min(previewImage.Width - 1, x));
+        y = Math.Max(0, Math.Min(previewImage.Height - 1, y));
+        width = Math.Max(1, Math.Min(previewImage.Width - x, width));
+        height = Math.Max(1, Math.Min(previewImage.Height - y, height));
+        return new Rectangle(x, y, width, height);
     }
 
     private void SaveImage() {
@@ -389,8 +637,731 @@ public sealed class CapturePreview : Form {
 
             if (dialog.ShowDialog(this) == DialogResult.OK) {
                 SavedPath = dialog.FileName;
-                System.IO.File.Copy(imagePath, SavedPath, true);
+                previewImage.Save(SavedPath, ImageFormat.Png);
             }
+        }
+    }
+}
+
+public sealed class LongScreenshotSession : Form {
+    private readonly Rectangle captureBounds;
+    private readonly string outputDir;
+    private readonly System.Collections.Generic.List<Bitmap> frames = new System.Collections.Generic.List<Bitmap>();
+    private LongCaptureBorder border;
+    private bool capturing;
+    private int bestMatchCount;
+    private int bestMatchIndex;
+    private int bestIgnoreBottomOffset;
+
+    public string Action { get; private set; }
+    public string SavedPath { get; private set; }
+    public string CapturePath { get; private set; }
+    public Point PreviewLocation { get; private set; }
+
+    public LongScreenshotSession(Rectangle captureBounds, string outputDir) {
+        this.captureBounds = captureBounds;
+        this.outputDir = outputDir;
+        Action = "Cancel";
+
+        StartPosition = FormStartPosition.Manual;
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        TopMost = true;
+        DoubleBuffered = true;
+        KeyPreview = true;
+        BackColor = Color.Magenta;
+        TransparencyKey = Color.Magenta;
+        Bounds = new Rectangle(captureBounds.Left, captureBounds.Top, 1, 1);
+    }
+
+    protected override void OnShown(EventArgs e) {
+        base.OnShown(e);
+        border = new LongCaptureBorder(captureBounds);
+        border.Show();
+        CaptureFrame();
+        FocusCaptureTarget();
+        BeginInvoke(new MethodInvoker(delegate {
+            CaptureUntilBottom();
+        }));
+    }
+
+    protected override void Dispose(bool disposing) {
+        if (disposing) {
+            foreach (Bitmap frame in frames) {
+                frame.Dispose();
+            }
+            if (border != null) {
+                border.Close();
+                border.Dispose();
+            }
+        }
+        base.Dispose(disposing);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e) {
+        if (e.KeyCode == Keys.Escape) {
+            Action = "Cancel";
+            DialogResult = DialogResult.Cancel;
+            Close();
+        }
+        base.OnKeyDown(e);
+    }
+
+    private IntPtr FocusCaptureTarget() {
+        HotkeyNative.POINT point = new HotkeyNative.POINT();
+        point.x = captureBounds.Left + captureBounds.Width / 2;
+        point.y = captureBounds.Top + captureBounds.Height / 2;
+        IntPtr target = HotkeyNative.WindowFromPoint(point);
+        if (target != IntPtr.Zero) {
+            IntPtr root = HotkeyNative.GetAncestor(target, HotkeyNative.GA_ROOT);
+            HotkeyNative.SetForegroundWindow(root != IntPtr.Zero ? root : target);
+        }
+        return target;
+    }
+
+    private void CaptureFrame() {
+        frames.Add(CaptureFrameBitmap());
+    }
+
+    private Bitmap CaptureFrameBitmap() {
+        Bitmap frame = new Bitmap(captureBounds.Width, captureBounds.Height);
+        using (Graphics g = Graphics.FromImage(frame)) {
+            g.CopyFromScreen(captureBounds.Left, captureBounds.Top, 0, 0, captureBounds.Size);
+        }
+        return frame;
+    }
+
+    private void CaptureUntilBottom() {
+        if (capturing) {
+            return;
+        }
+
+        capturing = true;
+        bool wasVisible = Visible;
+        bool borderVisible = border != null && border.Visible;
+
+        if (wasVisible) {
+            Hide();
+        }
+        if (borderVisible) {
+            border.Hide();
+        }
+        Application.DoEvents();
+        System.Threading.Thread.Sleep(80);
+
+        try {
+            int unchangedCount = 0;
+            for (int i = 0; i < 220; i++) {
+                ScrollCaptureTarget();
+                Application.DoEvents();
+                System.Threading.Thread.Sleep(240);
+
+                Bitmap frame = CaptureFrameBitmap();
+                Bitmap previous = frames.Count > 0 ? frames[frames.Count - 1] : null;
+                if (previous != null && IsSameFrame(previous, frame)) {
+                    frame.Dispose();
+                    unchangedCount++;
+                    if (unchangedCount >= 5) {
+                        break;
+                    }
+                }
+                else {
+                    unchangedCount = 0;
+                    frames.Add(frame);
+                }
+            }
+        }
+        finally {
+            capturing = false;
+            SaveLongScreenshotTemp();
+            Action = "Preview";
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+    }
+
+    private void ScrollCaptureTarget() {
+        int x = captureBounds.Left + captureBounds.Width / 2;
+        int y = captureBounds.Top + captureBounds.Height / 2;
+        HotkeyNative.SetCursorPos(x, y);
+        IntPtr target = FocusCaptureTarget();
+        System.Threading.Thread.Sleep(60);
+
+        HotkeyNative.mouse_event(HotkeyNative.MOUSEEVENTF_WHEEL, 0, 0, -120, UIntPtr.Zero);
+    }
+
+    private void PostScrollMessages(IntPtr target, int screenX, int screenY) {
+        if (target == IntPtr.Zero) {
+            return;
+        }
+
+        IntPtr wheelParam = HotkeyNative.MakeWheelWParam(-120);
+        IntPtr pointParam = HotkeyNative.MakeLParam(screenX, screenY);
+        IntPtr vScrollParam = new IntPtr(HotkeyNative.SB_LINEDOWN);
+        IntPtr current = target;
+
+        for (int i = 0; i < 3 && current != IntPtr.Zero; i++) {
+            HotkeyNative.PostMessage(current, HotkeyNative.WM_MOUSEWHEEL, wheelParam, pointParam);
+            HotkeyNative.PostMessage(current, HotkeyNative.WM_VSCROLL, vScrollParam, IntPtr.Zero);
+            IntPtr parent = HotkeyNative.GetParent(current);
+            if (parent == current) {
+                break;
+            }
+            current = parent;
+        }
+
+        IntPtr root = HotkeyNative.GetAncestor(target, HotkeyNative.GA_ROOT);
+        if (root != IntPtr.Zero && root != target) {
+            HotkeyNative.PostMessage(root, HotkeyNative.WM_MOUSEWHEEL, wheelParam, pointParam);
+            HotkeyNative.PostMessage(root, HotkeyNative.WM_VSCROLL, vScrollParam, IntPtr.Zero);
+        }
+    }
+
+    private bool IsSameFrame(Bitmap previous, Bitmap current) {
+        return ScoreWholeFrame(previous, current) <= 1.5;
+    }
+
+    private double ScoreWholeFrame(Bitmap previous, Bitmap current) {
+        return ScoreBitmapRegion(previous, current, 0, 0, 0, Math.Min(previous.Height, current.Height), Math.Min(previous.Width, current.Width), 80, 80);
+    }
+
+    private sealed class MatchResult {
+        public int Offset;
+        public double Score;
+
+        public MatchResult(int offset, double score) {
+            Offset = offset;
+            Score = score;
+        }
+    }
+
+    private sealed class Segment {
+        public Bitmap Image;
+        public int SourceY;
+        public int Height;
+
+        public Segment(Bitmap image, int sourceY, int height) {
+            Image = image;
+            SourceY = sourceY;
+            Height = height;
+        }
+    }
+
+    private Bitmap BuildLongImage() {
+        if (frames.Count == 0) {
+            throw new InvalidOperationException("No long screenshot frames captured.");
+        }
+
+        System.Collections.Generic.List<Segment> segments = new System.Collections.Generic.List<Segment>();
+        System.Collections.Generic.List<int> acceptedOffsets = new System.Collections.Generic.List<int>();
+        segments.Add(new Segment(frames[0], 0, frames[0].Height));
+
+        for (int i = 1; i < frames.Count; i++) {
+            MatchResult match = FindSmallStepScrollOffset(frames[i - 1], frames[i]);
+            if (match.Offset <= 2 && match.Score <= 2.0) {
+                continue;
+            }
+
+            int minimumUsefulOffset = Math.Max(12, frames[i].Height / 24);
+            if (match.Score <= 34.0 && match.Offset >= minimumUsefulOffset) {
+                int normalizedOffset = NormalizeScrollOffset(match.Offset, acceptedOffsets, frames[i].Height);
+                if (normalizedOffset < minimumUsefulOffset) {
+                    continue;
+                }
+
+                int appendHeight = Math.Min(normalizedOffset, frames[i].Height);
+                int sourceY = frames[i].Height - appendHeight;
+                if (appendHeight > 0) {
+                    segments.Add(new Segment(frames[i], sourceY, appendHeight));
+                    acceptedOffsets.Add(appendHeight);
+                }
+            }
+        }
+
+        int totalHeight = 0;
+        foreach (Segment segment in segments) {
+            totalHeight += segment.Height;
+        }
+
+        Bitmap result = new Bitmap(captureBounds.Width, totalHeight);
+        using (Graphics g = Graphics.FromImage(result)) {
+            g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            int y = 0;
+            foreach (Segment segment in segments) {
+                g.DrawImage(segment.Image, new Rectangle(0, y, captureBounds.Width, segment.Height),
+                    new Rectangle(0, segment.SourceY, captureBounds.Width, segment.Height), GraphicsUnit.Pixel);
+                y += segment.Height;
+            }
+        }
+
+        return result;
+    }
+
+    private int NormalizeScrollOffset(int offset, System.Collections.Generic.List<int> acceptedOffsets, int frameHeight) {
+        if (acceptedOffsets.Count < 3) {
+            return offset;
+        }
+
+        int typical = MedianOffset(acceptedOffsets);
+        if (typical <= 0) {
+            return offset;
+        }
+
+        int high = Math.Min(frameHeight / 2, Math.Max(typical + 18, (int)Math.Round(typical * 1.45)));
+        int low = Math.Max(4, Math.Min(typical - 18, (int)Math.Round(typical * 0.55)));
+
+        if (offset > high) {
+            return 0;
+        }
+        if (offset < low) {
+            return 0;
+        }
+        return offset;
+    }
+
+    private int MedianOffset(System.Collections.Generic.List<int> offsets) {
+        int[] values = offsets.ToArray();
+        Array.Sort(values);
+        return values[values.Length / 2];
+    }
+
+    private MatchResult FindSmallStepScrollOffset(Bitmap previous, Bitmap current) {
+        int height = Math.Min(previous.Height, current.Height);
+        int maxOffset = Math.Max(1, Math.Min(height - 40, Math.Min(260, height / 3)));
+        int preferredMinOffset = Math.Min(maxOffset, Math.Max(18, height / 5));
+        int bestOffset = 0;
+        double bestScore = Double.MaxValue;
+        int preferredOffset = 0;
+        double preferredScore = Double.MaxValue;
+
+        for (int offset = 0; offset <= maxOffset; offset += 8) {
+            double score = ScoreOffset(previous, current, offset);
+            if (score < bestScore - 0.1 || (Math.Abs(score - bestScore) <= 0.1 && offset < bestOffset)) {
+                bestScore = score;
+                bestOffset = offset;
+            }
+            if (offset >= preferredMinOffset &&
+                (score < preferredScore - 0.1 || (Math.Abs(score - preferredScore) <= 0.1 && offset < preferredOffset))) {
+                preferredScore = score;
+                preferredOffset = offset;
+            }
+        }
+
+        int fineStart = Math.Max(0, bestOffset - 8);
+        int fineEnd = Math.Min(maxOffset, bestOffset + 8);
+        for (int offset = fineStart; offset <= fineEnd; offset++) {
+            double score = ScoreOffset(previous, current, offset);
+            if (score < bestScore - 0.1 || (Math.Abs(score - bestScore) <= 0.1 && offset < bestOffset)) {
+                bestScore = score;
+                bestOffset = offset;
+            }
+        }
+
+        if (preferredScore < Double.MaxValue) {
+            int preferredFineStart = Math.Max(preferredMinOffset, preferredOffset - 8);
+            int preferredFineEnd = Math.Min(maxOffset, preferredOffset + 8);
+            for (int offset = preferredFineStart; offset <= preferredFineEnd; offset++) {
+                double score = ScoreOffset(previous, current, offset);
+                if (score < preferredScore - 0.1 || (Math.Abs(score - preferredScore) <= 0.1 && offset < preferredOffset)) {
+                    preferredScore = score;
+                    preferredOffset = offset;
+                }
+            }
+
+            if (preferredScore <= 34.0 && preferredScore <= bestScore + 14.0) {
+                return new MatchResult(preferredOffset, preferredScore);
+            }
+        }
+
+        return new MatchResult(bestOffset, bestScore);
+    }
+
+    private MatchResult FindVerticalScrollOffset(Bitmap previous, Bitmap current) {
+        int height = Math.Min(previous.Height, current.Height);
+        int minOverlap = Math.Min(height - 1, Math.Max(40, height / 5));
+        int maxOffset = Math.Max(0, height - minOverlap);
+        int preferredMinOffset = Math.Min(maxOffset, Math.Max(12, height / 3));
+        int bestOffset = 0;
+        double bestScore = Double.MaxValue;
+        int preferredOffset = 0;
+        double preferredScore = Double.MaxValue;
+
+        for (int offset = 0; offset <= maxOffset; offset += 8) {
+            double score = ScoreOffset(previous, current, offset);
+            if (score < bestScore - 0.25 || (Math.Abs(score - bestScore) <= 0.25 && offset > bestOffset)) {
+                bestScore = score;
+                bestOffset = offset;
+            }
+            if (offset >= preferredMinOffset &&
+                (score < preferredScore - 0.25 || (Math.Abs(score - preferredScore) <= 0.25 && offset > preferredOffset))) {
+                preferredScore = score;
+                preferredOffset = offset;
+            }
+        }
+
+        int fineStart = Math.Max(0, bestOffset - 12);
+        int fineEnd = Math.Min(maxOffset, bestOffset + 12);
+        for (int offset = fineStart; offset <= fineEnd; offset++) {
+            double score = ScoreOffset(previous, current, offset);
+            if (score < bestScore - 0.25 || (Math.Abs(score - bestScore) <= 0.25 && offset > bestOffset)) {
+                bestScore = score;
+                bestOffset = offset;
+            }
+        }
+
+        if (preferredScore < Double.MaxValue) {
+            int preferredFineStart = Math.Max(preferredMinOffset, preferredOffset - 12);
+            int preferredFineEnd = Math.Min(maxOffset, preferredOffset + 12);
+            for (int offset = preferredFineStart; offset <= preferredFineEnd; offset++) {
+                double score = ScoreOffset(previous, current, offset);
+                if (score < preferredScore - 0.25 || (Math.Abs(score - preferredScore) <= 0.25 && offset > preferredOffset)) {
+                    preferredScore = score;
+                    preferredOffset = offset;
+                }
+            }
+
+            if (preferredScore <= 38.0 && preferredScore <= bestScore + 12.0) {
+                return new MatchResult(preferredOffset, preferredScore);
+            }
+        }
+
+        return new MatchResult(bestOffset, bestScore);
+    }
+
+    private Bitmap CombineImageShareXStyle(Bitmap result, Bitmap currentImage) {
+        if (result == null) {
+            return (Bitmap)currentImage.Clone();
+        }
+
+        if (currentImage.Width != result.Width || currentImage.Height <= 1 || result.Height < currentImage.Height) {
+            return null;
+        }
+
+        int matchCount = 0;
+        int matchIndex = 0;
+        int matchLimit = currentImage.Height / 2;
+        int ignoreSideOffset = Math.Max(24, currentImage.Width / 20);
+        ignoreSideOffset = Math.Min(ignoreSideOffset, currentImage.Width / 3);
+        int compareWidth = currentImage.Width - ignoreSideOffset * 2;
+        if (compareWidth <= 8) {
+            ignoreSideOffset = 0;
+            compareWidth = currentImage.Width;
+        }
+
+        int ignoreBottomOffsetMax = currentImage.Height / 3;
+        int ignoreBottomOffset = Math.Max(24, currentImage.Height / 10);
+        ignoreBottomOffset = Math.Min(ignoreBottomOffset, ignoreBottomOffsetMax);
+        ignoreBottomOffset = Math.Max(ignoreBottomOffset, bestIgnoreBottomOffset);
+
+        int resultMatchBottom = result.Height - ignoreBottomOffset - 1;
+        if (resultMatchBottom <= 0) {
+            return null;
+        }
+
+        for (int currentImageY = currentImage.Height - 1; currentImageY >= 0 && matchCount < matchLimit; currentImageY--) {
+            int currentMatchCount = 0;
+            for (int y = 0; currentImageY - y >= 0 && resultMatchBottom - y >= 0 && currentMatchCount < matchLimit; y++) {
+                if (RowsMatch(result, resultMatchBottom - y, currentImage, currentImageY - y, ignoreSideOffset, compareWidth)) {
+                    currentMatchCount++;
+                }
+                else {
+                    break;
+                }
+            }
+
+            if (currentMatchCount > matchCount) {
+                matchCount = currentMatchCount;
+                matchIndex = currentImageY;
+            }
+        }
+
+        bool bestGuess = false;
+        if (matchCount == 0 && bestMatchCount > 0) {
+            matchCount = bestMatchCount;
+            matchIndex = bestMatchIndex;
+            ignoreBottomOffset = bestIgnoreBottomOffset;
+            bestGuess = true;
+        }
+
+        if (matchCount <= 0) {
+            return null;
+        }
+
+        int matchHeight = currentImage.Height - matchIndex - 1;
+        if (matchHeight <= 0) {
+            return result;
+        }
+
+        if (!bestGuess && matchCount > bestMatchCount) {
+            bestMatchCount = matchCount;
+            bestMatchIndex = matchIndex;
+            bestIgnoreBottomOffset = ignoreBottomOffset;
+        }
+
+        int keptResultHeight = result.Height - ignoreBottomOffset;
+        Bitmap newResult = new Bitmap(result.Width, keptResultHeight + matchHeight);
+        using (Graphics g = Graphics.FromImage(newResult)) {
+            g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+            g.DrawImage(result, new Rectangle(0, 0, result.Width, keptResultHeight),
+                new Rectangle(0, 0, result.Width, keptResultHeight), GraphicsUnit.Pixel);
+            g.DrawImage(currentImage, new Rectangle(0, keptResultHeight, currentImage.Width, matchHeight),
+                new Rectangle(0, matchIndex + 1, currentImage.Width, matchHeight), GraphicsUnit.Pixel);
+        }
+
+        return newResult;
+    }
+
+    private Bitmap CombineImageByBestOffset(Bitmap result, Bitmap currentImage, MatchResult match) {
+        if (result == null) {
+            return (Bitmap)currentImage.Clone();
+        }
+
+        if (match.Offset <= 3 && match.Score < 10.0) {
+            return result;
+        }
+
+        int appendHeight = currentImage.Height;
+        int sourceY = 0;
+        if (match.Score <= 50.0 && match.Offset > 0) {
+            appendHeight = Math.Min(match.Offset, currentImage.Height);
+            sourceY = currentImage.Height - appendHeight;
+        }
+
+        if (appendHeight <= 0) {
+            return result;
+        }
+
+        Bitmap newResult = new Bitmap(result.Width, result.Height + appendHeight);
+        using (Graphics g = Graphics.FromImage(newResult)) {
+            g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            g.DrawImage(result, new Rectangle(0, 0, result.Width, result.Height),
+                new Rectangle(0, 0, result.Width, result.Height), GraphicsUnit.Pixel);
+            g.DrawImage(currentImage, new Rectangle(0, result.Height, currentImage.Width, appendHeight),
+                new Rectangle(0, sourceY, currentImage.Width, appendHeight), GraphicsUnit.Pixel);
+        }
+        return newResult;
+    }
+
+    private bool RowsMatch(Bitmap a, int ay, Bitmap b, int by, int left, int width) {
+        int xStep = Math.Max(1, width / 96);
+        int mismatches = 0;
+        int maxMismatches = Math.Max(2, width / (xStep * 24));
+
+        for (int x = left; x < left + width; x += xStep) {
+            Color ca = a.GetPixel(x, ay);
+            Color cb = b.GetPixel(x, by);
+            int diff = Math.Abs(ca.R - cb.R) + Math.Abs(ca.G - cb.G) + Math.Abs(ca.B - cb.B);
+            if (diff > 6) {
+                mismatches++;
+                if (mismatches > maxMismatches) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private double ScoreOffset(Bitmap previous, Bitmap current, int offset) {
+        int width = Math.Min(previous.Width, current.Width);
+        int height = Math.Min(previous.Height, current.Height);
+        int overlap = height - offset;
+        if (overlap <= 0 || width <= 0) {
+            return Double.MaxValue;
+        }
+
+        int trim = Math.Min(24, Math.Max(0, width / 5));
+        int left = Math.Min(trim, Math.Max(0, width - 1));
+        int right = Math.Max(left + 1, width - trim);
+        return ScoreBitmapRegion(previous, current, left, offset, 0, overlap, right - left, 54, 72);
+    }
+
+    private double ScoreBitmapRegion(Bitmap previous, Bitmap current, int left, int previousTop, int currentTop, int height, int width, int xSamples, int ySamples) {
+        if (height <= 0 || width <= 0) {
+            return Double.MaxValue;
+        }
+
+        Rectangle previousRect = new Rectangle(0, 0, previous.Width, previous.Height);
+        Rectangle currentRect = new Rectangle(0, 0, current.Width, current.Height);
+        BitmapData previousData = null;
+        BitmapData currentData = null;
+
+        try {
+            previousData = previous.LockBits(previousRect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            currentData = current.LockBits(currentRect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+
+            int xStep = Math.Max(1, width / xSamples);
+            int yStep = Math.Max(1, height / ySamples);
+            long total = 0;
+            long count = 0;
+
+            for (int y = 0; y < height; y += yStep) {
+                int previousY = previousTop + y;
+                int currentY = currentTop + y;
+                IntPtr previousRow = IntPtr.Add(previousData.Scan0, previousY * previousData.Stride);
+                IntPtr currentRow = IntPtr.Add(currentData.Scan0, currentY * currentData.Stride);
+
+                for (int x = left; x < left + width; x += xStep) {
+                    int pixel = x * 4;
+                    int previousB = Marshal.ReadByte(previousRow, pixel);
+                    int previousG = Marshal.ReadByte(previousRow, pixel + 1);
+                    int previousR = Marshal.ReadByte(previousRow, pixel + 2);
+                    int currentB = Marshal.ReadByte(currentRow, pixel);
+                    int currentG = Marshal.ReadByte(currentRow, pixel + 1);
+                    int currentR = Marshal.ReadByte(currentRow, pixel + 2);
+                    total += Math.Abs(previousR - currentR) + Math.Abs(previousG - currentG) + Math.Abs(previousB - currentB);
+                    count++;
+                }
+            }
+
+            if (count == 0) {
+                return Double.MaxValue;
+            }
+            return (double)total / (double)(count * 3);
+        }
+        finally {
+            if (previousData != null) {
+                previous.UnlockBits(previousData);
+            }
+            if (currentData != null) {
+                current.UnlockBits(currentData);
+            }
+        }
+    }
+
+    private double ScoreOffsetSlow(Bitmap previous, Bitmap current, int offset) {
+        int width = Math.Min(previous.Width, current.Width);
+        int height = Math.Min(previous.Height, current.Height);
+        int overlap = height - offset;
+        if (overlap <= 0 || width <= 0) {
+            return Double.MaxValue;
+        }
+
+        int trim = Math.Min(24, Math.Max(0, width / 5));
+        int left = Math.Min(trim, Math.Max(0, width - 1));
+        int right = Math.Max(left + 1, width - trim);
+        int xStep = Math.Max(1, (right - left) / 54);
+        int yStep = Math.Max(1, overlap / 72);
+        long total = 0;
+        long count = 0;
+
+        for (int y = 0; y < overlap; y += yStep) {
+            int previousY = y + offset;
+            for (int x = left; x < right; x += xStep) {
+                Color a = previous.GetPixel(x, previousY);
+                Color b = current.GetPixel(x, y);
+                total += Math.Abs(a.R - b.R) + Math.Abs(a.G - b.G) + Math.Abs(a.B - b.B);
+                count++;
+            }
+        }
+
+        if (count == 0) {
+            return Double.MaxValue;
+        }
+        return (double)total / (double)(count * 3);
+    }
+
+    private void CopyLongScreenshot() {
+        using (Bitmap image = BuildLongImage()) {
+            Clipboard.SetImage((Image)image.Clone());
+        }
+    }
+
+    private void SaveLongScreenshotTemp() {
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Screenshot");
+        if (!System.IO.Directory.Exists(dir)) {
+            System.IO.Directory.CreateDirectory(dir);
+        }
+
+        using (Bitmap image = BuildLongImage()) {
+            string fileName = "long-screenshot-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".bmp";
+            CapturePath = System.IO.Path.Combine(dir, fileName);
+            image.Save(CapturePath, ImageFormat.Bmp);
+
+            Rectangle screen = SystemInformation.VirtualScreen;
+            int left = captureBounds.Left;
+            int top = captureBounds.Top;
+            if (left < screen.Left + 8) {
+                left = screen.Left + 8;
+            }
+            if (top < screen.Top + 8) {
+                top = screen.Top + 8;
+            }
+            PreviewLocation = new Point(left, top);
+        }
+    }
+
+    private void SaveLongScreenshot() {
+        if (!System.IO.Directory.Exists(outputDir)) {
+            System.IO.Directory.CreateDirectory(outputDir);
+        }
+
+        using (Bitmap image = BuildLongImage()) {
+            using (SaveFileDialog dialog = new SaveFileDialog()) {
+                dialog.Title = "Save long screenshot";
+                dialog.Filter = "PNG Image (*.png)|*.png";
+                dialog.DefaultExt = "png";
+                dialog.AddExtension = true;
+                dialog.OverwritePrompt = true;
+                dialog.InitialDirectory = outputDir;
+                dialog.FileName = "long-screenshot-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png";
+
+                if (dialog.ShowDialog(this) == DialogResult.OK) {
+                    SavedPath = dialog.FileName;
+                    image.Save(SavedPath, ImageFormat.Png);
+                    Action = "Save";
+                    DialogResult = DialogResult.OK;
+                    Close();
+                }
+            }
+        }
+    }
+}
+
+public sealed class LongCaptureBorder : Form {
+    private const int WS_EX_TRANSPARENT = 0x00000020;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int WS_EX_TOOLWINDOW = 0x00000080;
+    private readonly int thickness = 2;
+
+    public LongCaptureBorder(Rectangle captureBounds) {
+        StartPosition = FormStartPosition.Manual;
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        TopMost = true;
+        DoubleBuffered = true;
+        BackColor = Color.Magenta;
+        TransparencyKey = Color.Magenta;
+        Bounds = new Rectangle(
+            captureBounds.Left - thickness,
+            captureBounds.Top - thickness,
+            captureBounds.Width + thickness * 2,
+            captureBounds.Height + thickness * 2
+        );
+    }
+
+    protected override CreateParams CreateParams {
+        get {
+            CreateParams cp = base.CreateParams;
+            cp.ExStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+            return cp;
+        }
+    }
+
+    protected override bool ShowWithoutActivation {
+        get { return true; }
+    }
+
+    protected override void OnPaint(PaintEventArgs e) {
+        using (Brush brush = new SolidBrush(Color.FromArgb(64, 156, 255))) {
+            e.Graphics.FillRectangle(brush, 0, 0, Width, thickness);
+            e.Graphics.FillRectangle(brush, 0, Height - thickness, Width, thickness);
+            e.Graphics.FillRectangle(brush, 0, thickness, thickness, Height - thickness * 2);
+            e.Graphics.FillRectangle(brush, Width - thickness, thickness, thickness, Height - thickness * 2);
         }
     }
 }
@@ -465,6 +1436,20 @@ public sealed class PrettyButton : Button {
         else if (IconKind == "save") {
             iconColor = Color.FromArgb(2, 132, 199);
         }
+        else if (IconKind == "long") {
+            iconColor = Color.FromArgb(124, 58, 237);
+        }
+        else if (IconKind == "rect" || IconKind == "ellipse") {
+            iconColor = Color.FromArgb(239, 68, 68);
+        }
+        else if (IconKind.StartsWith("color-")) {
+            iconColor = GetSwatchColor(IconKind);
+        }
+
+        if (IconKind.StartsWith("color-")) {
+            DrawColorSwatch(graphics, rect, iconColor);
+            return;
+        }
 
         using (Pen pen = new Pen(iconColor, 2)) {
             pen.StartCap = System.Drawing.Drawing2D.LineCap.Round;
@@ -476,6 +1461,15 @@ public sealed class PrettyButton : Button {
 
             if (IconKind == "ocr") {
                 DrawOcrIcon(graphics, pen, cx, cy);
+            }
+            else if (IconKind == "rect") {
+                graphics.DrawRectangle(pen, new Rectangle(cx - 10, cy - 7, 20, 14));
+            }
+            else if (IconKind == "ellipse") {
+                graphics.DrawEllipse(pen, new Rectangle(cx - 10, cy - 7, 20, 14));
+            }
+            else if (IconKind == "long") {
+                DrawLongIcon(graphics, pen, cx, cy);
             }
             else if (IconKind == "save") {
                 DrawSaveIcon(graphics, pen, cx, cy);
@@ -525,6 +1519,46 @@ public sealed class PrettyButton : Button {
         graphics.DrawLine(pen, cx + 8, cy + 10, cx + 8, cy + 6);
     }
 
+    private void DrawLongIcon(Graphics graphics, Pen pen, int cx, int cy) {
+        Rectangle page = new Rectangle(cx - 8, cy - 11, 16, 22);
+        graphics.DrawRectangle(pen, page);
+        graphics.DrawLine(pen, cx - 4, cy - 5, cx + 4, cy - 5);
+        graphics.DrawLine(pen, cx - 4, cy, cx + 4, cy);
+        graphics.DrawLine(pen, cx, cy + 3, cx, cy + 10);
+        graphics.DrawLine(pen, cx - 4, cy + 6, cx, cy + 10);
+        graphics.DrawLine(pen, cx + 4, cy + 6, cx, cy + 10);
+    }
+
+    private Color GetSwatchColor(string kind) {
+        if (kind == "color-yellow") {
+            return Color.FromArgb(245, 158, 11);
+        }
+        if (kind == "color-green") {
+            return Color.FromArgb(34, 197, 94);
+        }
+        if (kind == "color-blue") {
+            return Color.FromArgb(59, 130, 246);
+        }
+        if (kind == "color-purple") {
+            return Color.FromArgb(168, 85, 247);
+        }
+        if (kind == "color-black") {
+            return Color.FromArgb(17, 24, 39);
+        }
+        return Color.FromArgb(239, 68, 68);
+    }
+
+    private void DrawColorSwatch(Graphics graphics, Rectangle rect, Color color) {
+        int size = 18;
+        Rectangle swatch = new Rectangle(rect.Left + (rect.Width - size) / 2, rect.Top + (rect.Height - size) / 2, size, size);
+        using (Brush brush = new SolidBrush(color)) {
+            graphics.FillEllipse(brush, swatch);
+        }
+        using (Pen pen = new Pen(Color.FromArgb(71, 85, 105), 1)) {
+            graphics.DrawEllipse(pen, swatch);
+        }
+    }
+
     private static System.Drawing.Drawing2D.GraphicsPath RoundedPath(Rectangle rect, int radius) {
         int diameter = radius * 2;
         System.Drawing.Drawing2D.GraphicsPath path = new System.Drawing.Drawing2D.GraphicsPath();
@@ -534,6 +1568,45 @@ public sealed class PrettyButton : Button {
         path.AddArc(rect.Left, rect.Bottom - diameter, diameter, diameter, 90, 90);
         path.CloseFigure();
         return path;
+    }
+}
+
+public sealed class ColorButton : Button {
+    private bool hovering;
+
+    public Color SwatchColor { get; set; }
+
+    public ColorButton() {
+        FlatStyle = FlatStyle.Flat;
+        FlatAppearance.BorderSize = 0;
+        FlatAppearance.MouseDownBackColor = Color.Transparent;
+        FlatAppearance.MouseOverBackColor = Color.Transparent;
+        BackColor = Color.Transparent;
+        Cursor = Cursors.Hand;
+        TabStop = false;
+    }
+
+    protected override void OnMouseEnter(EventArgs e) {
+        hovering = true;
+        Invalidate();
+        base.OnMouseEnter(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e) {
+        hovering = false;
+        Invalidate();
+        base.OnMouseLeave(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs e) {
+        e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        Rectangle rect = new Rectangle(3, 3, Width - 7, Height - 7);
+        using (Brush brush = new SolidBrush(SwatchColor)) {
+            e.Graphics.FillEllipse(brush, rect);
+        }
+        using (Pen pen = new Pen(hovering ? Color.FromArgb(37, 99, 235) : Color.FromArgb(71, 85, 105), hovering ? 2 : 1)) {
+            e.Graphics.DrawEllipse(pen, rect);
+        }
     }
 }
 
@@ -784,6 +1857,68 @@ function Start-RegionScreenshot {
                         finally {
                             $ocrWindow.Dispose()
                         }
+                    }
+                }
+                elseif ($previewResult -eq [System.Windows.Forms.DialogResult]::Ignore) {
+                    $keepPreviewOpen = $false
+                    $longWindow = New-Object LongScreenshotSession -ArgumentList @($selector.CaptureBounds, $Directory)
+                    try {
+                        $longWindow.ShowDialog() | Out-Null
+                        if ($longWindow.Action -eq "Preview" -and $longWindow.CapturePath) {
+                            $longPreviewOpen = $true
+                            while ($longPreviewOpen) {
+                                $longPreview = New-Object CapturePreview -ArgumentList @($longWindow.CapturePath, $Directory, $longWindow.PreviewLocation, $false)
+                                try {
+                                    $longPreviewResult = $longPreview.ShowDialog()
+                                    if ($longPreviewResult -eq [System.Windows.Forms.DialogResult]::Retry) {
+                                        $longPreviewOpen = $false
+                                        try {
+                                            $text = Invoke-ImageOcr -ImagePath $longWindow.CapturePath
+                                            if ([string]::IsNullOrWhiteSpace($text)) {
+                                                $text = "No text recognized."
+                                            }
+                                            $ocrWindow = New-Object OcrTextWindow -ArgumentList @($text)
+                                            try {
+                                                $ocrWindow.ShowDialog() | Out-Null
+                                            }
+                                            finally {
+                                                $ocrWindow.Dispose()
+                                            }
+                                        }
+                                        catch {
+                                            $ocrWindow = New-Object OcrTextWindow -ArgumentList @($_.Exception.Message)
+                                            try {
+                                                $ocrWindow.ShowDialog() | Out-Null
+                                            }
+                                            finally {
+                                                $ocrWindow.Dispose()
+                                            }
+                                        }
+                                    }
+                                    elseif ($longPreviewResult -eq [System.Windows.Forms.DialogResult]::OK) {
+                                        Write-Host "Long screenshot copied."
+                                        $longPreviewOpen = $false
+                                    }
+                                    elseif ($longPreviewResult -eq [System.Windows.Forms.DialogResult]::Yes) {
+                                        Write-Host "Long screenshot saved: $($longPreview.SavedPath)"
+                                        $longPreviewOpen = $false
+                                    }
+                                    else {
+                                        Write-Host "Canceled."
+                                        $longPreviewOpen = $false
+                                    }
+                                }
+                                finally {
+                                    $longPreview.Dispose()
+                                }
+                            }
+                        }
+                        else {
+                            Write-Host "Canceled."
+                        }
+                    }
+                    finally {
+                        $longWindow.Dispose()
                     }
                 }
                 elseif ($previewResult -eq [System.Windows.Forms.DialogResult]::OK) {
