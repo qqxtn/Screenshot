@@ -287,7 +287,7 @@ public sealed class CapturePreview : Form {
     private readonly bool showLongButton;
     private readonly double previewScale;
     private PictureBox picture;
-    private Panel colorPalette;
+    private ColorPalettePanel colorPalette;
     private string drawMode;
     private Color drawColor = Color.FromArgb(239, 68, 68);
     private bool drawing;
@@ -327,7 +327,7 @@ public sealed class CapturePreview : Form {
         int buttonWidth = 42;
         int buttonHeight = 34;
         int gap = 6;
-        int buttonCount = showLongButton ? 7 : 6;
+        int buttonCount = showLongButton ? 8 : 7;
         int totalWidth = buttonWidth * buttonCount + gap * (buttonCount - 1);
         int maxPreviewWidth = Math.Max(120, screen.Width - 32 - borderSize * 2);
         int maxPreviewHeight = Math.Max(120, screen.Height - toolbarHeight - 32 - borderSize * 2);
@@ -385,13 +385,18 @@ public sealed class CapturePreview : Form {
             ShowColorPalette(bar, left + buttonWidth + gap, buttonWidth);
         });
 
-        AddButton(bar, "ocr", left + (buttonWidth + gap) * 2, buttonWidth, buttonHeight, "Extract text", delegate {
+        AddButton(bar, "arrow", left + (buttonWidth + gap) * 2, buttonWidth, buttonHeight, "Arrow", delegate {
+            drawMode = drawMode == "arrow" ? null : "arrow";
+            ShowColorPalette(bar, left + (buttonWidth + gap) * 2, buttonWidth);
+        });
+
+        AddButton(bar, "ocr", left + (buttonWidth + gap) * 3, buttonWidth, buttonHeight, "Extract text", delegate {
             ExtractTextRequested = true;
             DialogResult = DialogResult.Retry;
             Close();
         });
 
-        int index = 3;
+        int index = 4;
         if (showLongButton) {
             AddButton(bar, "long", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Long screenshot", delegate {
                 LongScreenshotRequested = true;
@@ -469,26 +474,16 @@ public sealed class CapturePreview : Form {
             colorPalette = null;
         }
 
-        colorPalette = new Panel();
-        colorPalette.BackColor = Color.White;
-        colorPalette.Width = 34;
-        colorPalette.Height = 184;
+        colorPalette = new ColorPalettePanel();
+        colorPalette.ColorSelected += delegate(Color color) {
+            drawColor = color;
+            HideColorPalette();
+        };
+        colorPalette.Width = 40;
+        colorPalette.Height = 190;
         int left = Math.Max(0, Math.Min(anchorLeft + (anchorWidth - colorPalette.Width) / 2, bar.Width - colorPalette.Width));
         Point screenPoint = bar.PointToScreen(new Point(left, 10 - colorPalette.Height - 4));
         colorPalette.Location = PointToClient(screenPoint);
-        colorPalette.Paint += delegate(object sender, PaintEventArgs e) {
-            using (Pen pen = new Pen(Color.FromArgb(203, 213, 225))) {
-                e.Graphics.DrawRectangle(pen, 0, 0, colorPalette.Width - 1, colorPalette.Height - 1);
-            }
-        };
-
-        AddColorChoice(colorPalette, Color.FromArgb(239, 68, 68), 6);
-        AddColorChoice(colorPalette, Color.FromArgb(245, 158, 11), 35);
-        AddColorChoice(colorPalette, Color.FromArgb(34, 197, 94), 64);
-        AddColorChoice(colorPalette, Color.FromArgb(59, 130, 246), 93);
-        AddColorChoice(colorPalette, Color.FromArgb(168, 85, 247), 122);
-        AddColorChoice(colorPalette, Color.FromArgb(17, 24, 39), 151);
-
         Controls.Add(colorPalette);
         colorPalette.BringToFront();
     }
@@ -498,17 +493,6 @@ public sealed class CapturePreview : Form {
             colorPalette.Dispose();
             colorPalette = null;
         }
-    }
-
-    private void AddColorChoice(Control parent, Color color, int top) {
-        ColorButton button = new ColorButton();
-        button.SwatchColor = color;
-        button.Bounds = new Rectangle(5, top, 24, 24);
-        button.Click += delegate {
-            drawColor = color;
-            HideColorPalette();
-        };
-        parent.Controls.Add(button);
     }
 
     private void CopyImage() {
@@ -551,47 +535,82 @@ public sealed class CapturePreview : Form {
             return;
         }
 
-        Rectangle rect = GetPreviewRectangle(drawStart, drawCurrent);
-        if (rect.Width < 2 || rect.Height < 2) {
-            return;
-        }
-
         e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         using (Pen pen = new Pen(drawColor, 2)) {
-            if (drawMode == "ellipse") {
-                e.Graphics.DrawEllipse(pen, rect);
+            if (drawMode == "arrow") {
+                if (Distance(drawStart, drawCurrent) < 4) {
+                    return;
+                }
+                using (System.Drawing.Drawing2D.AdjustableArrowCap cap = new System.Drawing.Drawing2D.AdjustableArrowCap(4, 5, true)) {
+                    pen.CustomEndCap = cap;
+                    e.Graphics.DrawLine(pen, drawStart, drawCurrent);
+                }
             }
             else {
-                e.Graphics.DrawRectangle(pen, rect);
+                Rectangle rect = GetPreviewRectangle(drawStart, drawCurrent);
+                if (rect.Width < 2 || rect.Height < 2) {
+                    return;
+                }
+
+                if (drawMode == "ellipse") {
+                    e.Graphics.DrawEllipse(pen, rect);
+                }
+                else {
+                    e.Graphics.DrawRectangle(pen, rect);
+                }
             }
         }
     }
 
     private void CommitShape() {
-        Rectangle previewRect = GetPreviewRectangle(drawStart, drawCurrent);
-        if (previewRect.Width < 3 || previewRect.Height < 3) {
-            return;
-        }
-
-        Rectangle imageRect = PreviewToImageRectangle(previewRect);
-        if (imageRect.Width < 2 || imageRect.Height < 2) {
-            return;
-        }
-
         using (Graphics g = Graphics.FromImage(previewImage)) {
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             int stroke = Math.Max(2, (int)Math.Round(3.0 / Math.Max(0.25, previewScale)));
             using (Pen pen = new Pen(drawColor, stroke)) {
-                if (drawMode == "ellipse") {
-                    g.DrawEllipse(pen, imageRect);
+                if (drawMode == "arrow") {
+                    if (Distance(drawStart, drawCurrent) < 4) {
+                        return;
+                    }
+
+                    Point imageStart = PreviewToImagePoint(drawStart);
+                    Point imageEnd = PreviewToImagePoint(drawCurrent);
+                    using (System.Drawing.Drawing2D.AdjustableArrowCap cap = new System.Drawing.Drawing2D.AdjustableArrowCap(
+                        Math.Max(4, (float)(stroke * 1.35)),
+                        Math.Max(5, (float)(stroke * 2.0)),
+                        true
+                    )) {
+                        pen.CustomEndCap = cap;
+                        g.DrawLine(pen, imageStart, imageEnd);
+                    }
                 }
                 else {
-                    g.DrawRectangle(pen, imageRect);
+                    Rectangle previewRect = GetPreviewRectangle(drawStart, drawCurrent);
+                    if (previewRect.Width < 3 || previewRect.Height < 3) {
+                        return;
+                    }
+
+                    Rectangle imageRect = PreviewToImageRectangle(previewRect);
+                    if (imageRect.Width < 2 || imageRect.Height < 2) {
+                        return;
+                    }
+
+                    if (drawMode == "ellipse") {
+                        g.DrawEllipse(pen, imageRect);
+                    }
+                    else {
+                        g.DrawRectangle(pen, imageRect);
+                    }
                 }
             }
         }
 
         picture.Image = previewImage;
+    }
+
+    private double Distance(Point a, Point b) {
+        int dx = a.X - b.X;
+        int dy = a.Y - b.Y;
+        return Math.Sqrt(dx * dx + dy * dy);
     }
 
     private Point ClampPreviewPoint(Point point) {
@@ -619,6 +638,14 @@ public sealed class CapturePreview : Form {
         width = Math.Max(1, Math.Min(previewImage.Width - x, width));
         height = Math.Max(1, Math.Min(previewImage.Height - y, height));
         return new Rectangle(x, y, width, height);
+    }
+
+    private Point PreviewToImagePoint(Point point) {
+        int x = (int)Math.Round(point.X / previewScale);
+        int y = (int)Math.Round(point.Y / previewScale);
+        x = Math.Max(0, Math.Min(previewImage.Width - 1, x));
+        y = Math.Max(0, Math.Min(previewImage.Height - 1, y));
+        return new Point(x, y);
     }
 
     private void SaveImage() {
@@ -1439,7 +1466,7 @@ public sealed class PrettyButton : Button {
         else if (IconKind == "long") {
             iconColor = Color.FromArgb(124, 58, 237);
         }
-        else if (IconKind == "rect" || IconKind == "ellipse") {
+        else if (IconKind == "rect" || IconKind == "ellipse" || IconKind == "arrow") {
             iconColor = Color.FromArgb(239, 68, 68);
         }
         else if (IconKind.StartsWith("color-")) {
@@ -1467,6 +1494,10 @@ public sealed class PrettyButton : Button {
             }
             else if (IconKind == "ellipse") {
                 graphics.DrawEllipse(pen, new Rectangle(cx - 10, cy - 7, 20, 14));
+            }
+            else if (IconKind == "arrow") {
+                pen.EndCap = System.Drawing.Drawing2D.LineCap.ArrowAnchor;
+                graphics.DrawLine(pen, cx - 10, cy + 7, cx + 9, cy - 7);
             }
             else if (IconKind == "long") {
                 DrawLongIcon(graphics, pen, cx, cy);
@@ -1571,42 +1602,103 @@ public sealed class PrettyButton : Button {
     }
 }
 
-public sealed class ColorButton : Button {
-    private bool hovering;
+public sealed class ColorPalettePanel : Control {
+    private readonly Color[] colors = new Color[] {
+        Color.FromArgb(239, 68, 68),
+        Color.FromArgb(245, 158, 11),
+        Color.FromArgb(34, 197, 94),
+        Color.FromArgb(59, 130, 246),
+        Color.FromArgb(168, 85, 247),
+        Color.FromArgb(17, 24, 39)
+    };
+    private int hoverIndex = -1;
 
-    public Color SwatchColor { get; set; }
+    public delegate void ColorSelectedHandler(Color color);
+    public event ColorSelectedHandler ColorSelected;
 
-    public ColorButton() {
-        FlatStyle = FlatStyle.Flat;
-        FlatAppearance.BorderSize = 0;
-        FlatAppearance.MouseDownBackColor = Color.Transparent;
-        FlatAppearance.MouseOverBackColor = Color.Transparent;
-        BackColor = Color.Transparent;
+    public ColorPalettePanel() {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        BackColor = Color.FromArgb(248, 250, 252);
         Cursor = Cursors.Hand;
-        TabStop = false;
     }
 
-    protected override void OnMouseEnter(EventArgs e) {
-        hovering = true;
-        Invalidate();
-        base.OnMouseEnter(e);
+    protected override void OnPaintBackground(PaintEventArgs e) {
+        e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using (Brush brush = new SolidBrush(BackColor)) {
+            e.Graphics.FillRectangle(brush, ClientRectangle);
+        }
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e) {
+        int index = HitTest(e.Location);
+        if (index != hoverIndex) {
+            hoverIndex = index;
+            Invalidate();
+        }
+        base.OnMouseMove(e);
     }
 
     protected override void OnMouseLeave(EventArgs e) {
-        hovering = false;
+        hoverIndex = -1;
         Invalidate();
         base.OnMouseLeave(e);
     }
 
+    protected override void OnMouseClick(MouseEventArgs e) {
+        int index = HitTest(e.Location);
+        if (index >= 0 && ColorSelected != null) {
+            ColorSelected(colors[index]);
+        }
+        base.OnMouseClick(e);
+    }
+
     protected override void OnPaint(PaintEventArgs e) {
         e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        Rectangle rect = new Rectangle(3, 3, Width - 7, Height - 7);
-        using (Brush brush = new SolidBrush(SwatchColor)) {
-            e.Graphics.FillEllipse(brush, rect);
+        Rectangle bg = new Rectangle(1, 1, Width - 3, Height - 3);
+        using (System.Drawing.Drawing2D.GraphicsPath bgPath = RoundedPath(bg, 10)) {
+            using (Brush fill = new SolidBrush(Color.FromArgb(248, 250, 252))) {
+                e.Graphics.FillPath(fill, bgPath);
+            }
+            using (Pen border = new Pen(Color.FromArgb(148, 163, 184), 1)) {
+                e.Graphics.DrawPath(border, bgPath);
+            }
         }
-        using (Pen pen = new Pen(hovering ? Color.FromArgb(37, 99, 235) : Color.FromArgb(71, 85, 105), hovering ? 2 : 1)) {
-            e.Graphics.DrawEllipse(pen, rect);
+
+        for (int i = 0; i < colors.Length; i++) {
+            Rectangle rect = GetColorRect(i);
+            using (Brush brush = new SolidBrush(colors[i])) {
+                e.Graphics.FillEllipse(brush, rect);
+            }
+            if (i == hoverIndex) {
+                using (Pen pen = new Pen(Color.FromArgb(37, 99, 235), 2)) {
+                    e.Graphics.DrawEllipse(pen, rect);
+                }
+            }
         }
+    }
+
+    private int HitTest(Point point) {
+        for (int i = 0; i < colors.Length; i++) {
+            if (GetColorRect(i).Contains(point)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private Rectangle GetColorRect(int index) {
+        return new Rectangle(9, 9 + index * 29, 22, 22);
+    }
+
+    private static System.Drawing.Drawing2D.GraphicsPath RoundedPath(Rectangle rect, int radius) {
+        System.Drawing.Drawing2D.GraphicsPath path = new System.Drawing.Drawing2D.GraphicsPath();
+        int diameter = radius * 2;
+        path.AddArc(rect.Left, rect.Top, diameter, diameter, 180, 90);
+        path.AddArc(rect.Right - diameter, rect.Top, diameter, diameter, 270, 90);
+        path.AddArc(rect.Right - diameter, rect.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(rect.Left, rect.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 }
 

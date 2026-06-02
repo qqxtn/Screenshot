@@ -12,7 +12,7 @@
 - 拖拽鼠标选择矩形截图区域
 - 支持长截图
 - 支持 OCR 文字识别
-- 支持矩形和椭圆标注
+- 支持矩形、椭圆和箭头标注
 - 选择标注形状后，可在弹出的颜色面板中选择标注颜色
 - 支持复制到剪贴板
 - 支持保存为 PNG 图片
@@ -42,13 +42,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Screenshot.ps1
 
 - 矩形标注
 - 椭圆标注
+- 箭头标注
 - OCR 文字识别
 - 长截图
 - 保存到本地
 - 取消
 - 完成并复制到剪贴板
 
-点击矩形或椭圆按钮后，按钮上方会弹出竖向颜色面板，可选择红、黄、绿、蓝、紫、黑。
+点击矩形、椭圆或箭头按钮后，按钮上方会弹出竖向颜色面板，可选择红、黄、绿、蓝、紫、黑。
 
 ### 长截图
 
@@ -99,7 +100,7 @@ OCR 使用 Windows 自带 OCR 引擎。识别效果会受到图片清晰度、�
 - Drag to select a rectangular capture area
 - Long screenshot support
 - OCR text extraction
-- Rectangle and ellipse annotations
+- Rectangle, ellipse, and arrow annotations
 - Popup color picker after selecting an annotation shape
 - Copy screenshots to the clipboard
 - Save screenshots as PNG images
@@ -129,13 +130,14 @@ After selecting an area, the preview toolbar includes:
 
 - Rectangle annotation
 - Ellipse annotation
+- Arrow annotation
 - OCR text extraction
 - Long screenshot
 - Save locally
 - Cancel
 - Done and copy to clipboard
 
-Click the rectangle or ellipse button to open a vertical color palette above the shape button. Available colors: red, yellow, green, blue, purple, and black.
+Click the rectangle, ellipse, or arrow button to open a vertical color palette above the shape button. Available colors: red, yellow, green, blue, purple, and black.
 
 ### Long Screenshots
 
