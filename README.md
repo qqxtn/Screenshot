@@ -12,13 +12,15 @@
 - 拖拽鼠标选择矩形截图区域
 - 支持长截图
 - 支持 OCR 文字识别
-- 支持矩形、椭圆和箭头标注
-- 选择标注形状后，可在弹出的颜色面板中选择标注颜色
+- 支持矩形、椭圆、箭头和文字标注
+- 选择标注工具后，可在按钮上方弹出的竖向颜色面板中选择颜色
+- 文字标注支持中文输入，`Ctrl + Enter` 提交，`Esc` 取消
 - 支持复制到剪贴板
 - 支持保存为 PNG 图片
 - 长图预览会自动缩放，确保底部按钮可见
 - 独立版 `Run-Screenshot.exe` 运行后不会弹出命令行窗口
-- 独立版会常驻系统托盘，可通过托盘菜单退出
+- 程序常驻系统托盘，托盘图标和截图热键由同一进程管理，可通过托盘菜单退出
+- 独立版内嵌脚本和应用图标，运行时不依赖 `Screenshot.ps1`
 
 ### 使用方法
 
@@ -28,7 +30,7 @@
 Run-Screenshot.exe
 ```
 
-运行后程序会出现在右下角系统托盘。按 `Ctrl + Alt + A` 开始截图。
+运行后程序会出现在右下角系统托盘。按 `Ctrl + Alt + A` 开始截图。右键托盘图标选择 `Exit` 可退出程序并释放快捷键。
 
 也可以通过脚本运行：
 
@@ -43,13 +45,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Screenshot.ps1
 - 矩形标注
 - 椭圆标注
 - 箭头标注
+- 文字标注
 - OCR 文字识别
 - 长截图
 - 保存到本地
 - 取消
 - 完成并复制到剪贴板
 
-点击矩形、椭圆或箭头按钮后，按钮上方会弹出竖向颜色面板，可选择红、黄、绿、蓝、紫、黑。
+点击矩形、椭圆、箭头或文字按钮后，按钮上方会弹出竖向颜色面板，可选择红、黄、绿、蓝、紫、黑。
+
+### 文字标注
+
+点击文字按钮后，在截图上点击要放置文字的位置，会出现输入框。输入完成后：
+
+- 按 `Ctrl + Enter` 提交文字
+- 点击其他位置也会提交文字
+- 按 `Esc` 取消当前文字输入
 
 ### 长截图
 
@@ -79,7 +90,7 @@ OCR 使用 Windows 自带 OCR 引擎。识别效果会受到图片清晰度、�
 
 ### 文件说明
 
-- `Run-Screenshot.exe`: 独立版程序，内嵌脚本，运行时不依赖 `Screenshot.ps1`
+- `Run-Screenshot.exe`: 独立版程序，内嵌脚本和图标，运行时不依赖 `Screenshot.ps1`
 - `Screenshot.ps1`: 主脚本，便于开发和调试
 - `Run-Screenshot.cmd`: 脚本启动器
 - `README.md`: 项目说明
@@ -100,13 +111,15 @@ OCR 使用 Windows 自带 OCR 引擎。识别效果会受到图片清晰度、�
 - Drag to select a rectangular capture area
 - Long screenshot support
 - OCR text extraction
-- Rectangle, ellipse, and arrow annotations
-- Popup color picker after selecting an annotation shape
+- Rectangle, ellipse, arrow, and text annotations
+- Popup vertical color picker after selecting an annotation tool
+- Text annotations support IME input; press `Ctrl + Enter` to commit and `Esc` to cancel
 - Copy screenshots to the clipboard
 - Save screenshots as PNG images
 - Large previews are scaled so action buttons remain visible
 - Standalone `Run-Screenshot.exe` runs without opening a command prompt
-- Standalone app stays in the system tray and can be exited from the tray menu
+- The app stays in the system tray; the tray icon and screenshot hotkey are managed by the same process
+- Standalone executable embeds the script and application icon; it does not require `Screenshot.ps1` at runtime
 
 ### Usage
 
@@ -116,7 +129,7 @@ Recommended:
 Run-Screenshot.exe
 ```
 
-After launch, the app appears in the system tray. Press `Ctrl + Alt + A` to capture.
+After launch, the app appears in the system tray. Press `Ctrl + Alt + A` to capture. Right-click the tray icon and choose `Exit` to quit and release the hotkey.
 
 You can also run the script directly:
 
@@ -131,13 +144,22 @@ After selecting an area, the preview toolbar includes:
 - Rectangle annotation
 - Ellipse annotation
 - Arrow annotation
+- Text annotation
 - OCR text extraction
 - Long screenshot
 - Save locally
 - Cancel
 - Done and copy to clipboard
 
-Click the rectangle, ellipse, or arrow button to open a vertical color palette above the shape button. Available colors: red, yellow, green, blue, purple, and black.
+Click the rectangle, ellipse, arrow, or text button to open a vertical color palette above the tool button. Available colors: red, yellow, green, blue, purple, and black.
+
+### Text Annotation
+
+Click the text button, then click the screenshot where the text should be placed. After typing:
+
+- Press `Ctrl + Enter` to commit text
+- Click elsewhere to commit text
+- Press `Esc` to cancel the current text input
 
 ### Long Screenshots
 
@@ -167,7 +189,7 @@ OCR uses the built-in Windows OCR engine. Accuracy depends on image clarity, fon
 
 ### Files
 
-- `Run-Screenshot.exe`: standalone app with embedded script; does not require `Screenshot.ps1` at runtime
+- `Run-Screenshot.exe`: standalone app with embedded script and icon; does not require `Screenshot.ps1` at runtime
 - `Screenshot.ps1`: main script for development and debugging
 - `Run-Screenshot.cmd`: script launcher
 - `README.md`: project documentation

@@ -42,6 +42,15 @@ public static class HotkeyNative {
     public static extern sbyte GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
 
     [DllImport("user32.dll")]
+    public static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern void PostQuitMessage(int nExitCode);
+
+    [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(POINT point);
 
     [DllImport("user32.dll")]
@@ -290,6 +299,8 @@ public sealed class CapturePreview : Form {
     private ColorPalettePanel colorPalette;
     private string drawMode;
     private Color drawColor = Color.FromArgb(239, 68, 68);
+    private TextBox activeTextBox;
+    private Point activeTextPoint;
     private bool drawing;
     private Point drawStart;
     private Point drawCurrent;
@@ -327,7 +338,7 @@ public sealed class CapturePreview : Form {
         int buttonWidth = 42;
         int buttonHeight = 34;
         int gap = 6;
-        int buttonCount = showLongButton ? 8 : 7;
+        int buttonCount = showLongButton ? 9 : 8;
         int totalWidth = buttonWidth * buttonCount + gap * (buttonCount - 1);
         int maxPreviewWidth = Math.Max(120, screen.Width - 32 - borderSize * 2);
         int maxPreviewHeight = Math.Max(120, screen.Height - toolbarHeight - 32 - borderSize * 2);
@@ -390,13 +401,18 @@ public sealed class CapturePreview : Form {
             ShowColorPalette(bar, left + (buttonWidth + gap) * 2, buttonWidth);
         });
 
-        AddButton(bar, "ocr", left + (buttonWidth + gap) * 3, buttonWidth, buttonHeight, "Extract text", delegate {
+        AddButton(bar, "text", left + (buttonWidth + gap) * 3, buttonWidth, buttonHeight, "Text", delegate {
+            drawMode = drawMode == "text" ? null : "text";
+            ShowColorPalette(bar, left + (buttonWidth + gap) * 3, buttonWidth);
+        });
+
+        AddButton(bar, "ocr", left + (buttonWidth + gap) * 4, buttonWidth, buttonHeight, "Extract text", delegate {
             ExtractTextRequested = true;
             DialogResult = DialogResult.Retry;
             Close();
         });
 
-        int index = 4;
+        int index = 5;
         if (showLongButton) {
             AddButton(bar, "long", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Long screenshot", delegate {
                 LongScreenshotRequested = true;
@@ -496,11 +512,17 @@ public sealed class CapturePreview : Form {
     }
 
     private void CopyImage() {
+        CommitActiveTextBox();
         Clipboard.SetImage((Image)previewImage.Clone());
     }
 
     private void PictureMouseDown(object sender, MouseEventArgs e) {
         if (String.IsNullOrEmpty(drawMode) || e.Button != MouseButtons.Left) {
+            return;
+        }
+
+        if (drawMode == "text") {
+            ShowTextEditor(ClampPreviewPoint(e.Location));
             return;
         }
 
@@ -607,6 +629,80 @@ public sealed class CapturePreview : Form {
         picture.Image = previewImage;
     }
 
+    private void ShowTextEditor(Point location) {
+        CommitActiveTextBox();
+        activeTextPoint = location;
+        activeTextBox = new TextBox();
+        activeTextBox.BorderStyle = BorderStyle.FixedSingle;
+        activeTextBox.Font = new Font("Microsoft YaHei UI", 12);
+        activeTextBox.ForeColor = drawColor;
+        activeTextBox.BackColor = Color.White;
+        activeTextBox.ImeMode = ImeMode.On;
+        activeTextBox.Bounds = new Rectangle(location.X, location.Y, Math.Min(260, Math.Max(120, picture.Width - location.X - 8)), 30);
+        activeTextBox.KeyDown += delegate(object sender, KeyEventArgs e) {
+            if (e.Control && e.KeyCode == Keys.Enter) {
+                CommitActiveTextBox();
+                e.SuppressKeyPress = true;
+            }
+            else if (e.KeyCode == Keys.Escape) {
+                CancelActiveTextBox();
+                e.SuppressKeyPress = true;
+            }
+        };
+        activeTextBox.LostFocus += delegate {
+            CommitActiveTextBox();
+        };
+        picture.Controls.Add(activeTextBox);
+        activeTextBox.Focus();
+    }
+
+    private void CommitActiveTextBox() {
+        if (activeTextBox == null) {
+            return;
+        }
+
+        string text = activeTextBox.Text;
+        TextBox box = activeTextBox;
+        activeTextBox = null;
+        if (box.Parent != null) {
+            box.Parent.Controls.Remove(box);
+        }
+        box.Dispose();
+
+        if (String.IsNullOrWhiteSpace(text)) {
+            picture.Invalidate();
+            return;
+        }
+
+        Point imagePoint = PreviewToImagePoint(activeTextPoint);
+        using (Graphics g = Graphics.FromImage(previewImage)) {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            float fontSize = Math.Max(12f, (float)(18.0 / Math.Max(0.25, previewScale)));
+            using (Font font = new Font("Microsoft YaHei UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel)) {
+                using (Brush brush = new SolidBrush(drawColor)) {
+                    g.DrawString(text, font, brush, imagePoint);
+                }
+            }
+        }
+        picture.Image = previewImage;
+        picture.Invalidate();
+    }
+
+    private void CancelActiveTextBox() {
+        if (activeTextBox == null) {
+            return;
+        }
+
+        TextBox box = activeTextBox;
+        activeTextBox = null;
+        if (box.Parent != null) {
+            box.Parent.Controls.Remove(box);
+        }
+        box.Dispose();
+        picture.Invalidate();
+    }
+
     private double Distance(Point a, Point b) {
         int dx = a.X - b.X;
         int dy = a.Y - b.Y;
@@ -649,6 +745,7 @@ public sealed class CapturePreview : Form {
     }
 
     private void SaveImage() {
+        CommitActiveTextBox();
         if (!System.IO.Directory.Exists(outputDir)) {
             System.IO.Directory.CreateDirectory(outputDir);
         }
@@ -1466,7 +1563,7 @@ public sealed class PrettyButton : Button {
         else if (IconKind == "long") {
             iconColor = Color.FromArgb(124, 58, 237);
         }
-        else if (IconKind == "rect" || IconKind == "ellipse" || IconKind == "arrow") {
+        else if (IconKind == "rect" || IconKind == "ellipse" || IconKind == "arrow" || IconKind == "text") {
             iconColor = Color.FromArgb(239, 68, 68);
         }
         else if (IconKind.StartsWith("color-")) {
@@ -1498,6 +1595,12 @@ public sealed class PrettyButton : Button {
             else if (IconKind == "arrow") {
                 pen.EndCap = System.Drawing.Drawing2D.LineCap.ArrowAnchor;
                 graphics.DrawLine(pen, cx - 10, cy + 7, cx + 9, cy - 7);
+            }
+            else if (IconKind == "text") {
+                using (Font font = new Font("Segoe UI", 14, FontStyle.Bold)) {
+                    Rectangle textRect = new Rectangle(cx - 10, cy - 12, 20, 24);
+                    TextRenderer.DrawText(graphics, "T", font, textRect, iconColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                }
             }
             else if (IconKind == "long") {
                 DrawLongIcon(graphics, pen, cx, cy);
@@ -2045,6 +2148,111 @@ function Start-RegionScreenshot {
     }
 }
 
+function New-TrayIcon {
+    $menu = New-Object System.Windows.Forms.ContextMenuStrip
+    $exitItem = New-Object System.Windows.Forms.ToolStripMenuItem
+    $exitItem.Text = "Exit"
+    $exitItem.Add_Click({
+        [HotkeyNative]::PostQuitMessage(0)
+    })
+    [void]$menu.Items.Add($exitItem)
+
+    $tray = New-Object System.Windows.Forms.NotifyIcon
+    $tray.Icon = New-AppIcon
+    $tray.Text = "Screenshot is running"
+    $tray.ContextMenuStrip = $menu
+    $tray.Visible = $true
+    $tray.Add_DoubleClick({
+        $tray.ShowBalloonTip(1500, "Screenshot", "Press Ctrl+Alt+A to capture.", [System.Windows.Forms.ToolTipIcon]::Info)
+    })
+    return $tray
+}
+
+function New-AppIcon {
+    $size = 64
+    $bitmap = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $graphics.Clear([System.Drawing.Color]::Transparent)
+
+        $rect = New-Object System.Drawing.Rectangle 7, 9, 50, 42
+        $path = New-RoundedPath $rect 10
+        try {
+            $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(37, 99, 235))
+            try {
+                $graphics.FillPath($brush, $path)
+            }
+            finally {
+                $brush.Dispose()
+            }
+        }
+        finally {
+            $path.Dispose()
+        }
+
+        $border = New-Object System.Drawing.Pen ([System.Drawing.Color]::White), 4
+        try {
+            $graphics.DrawRectangle($border, (New-Object System.Drawing.Rectangle 14, 17, 36, 26))
+        }
+        finally {
+            $border.Dispose()
+        }
+
+        $lens = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+        try {
+            $graphics.FillEllipse($lens, (New-Object System.Drawing.Rectangle 25, 22, 14, 14))
+        }
+        finally {
+            $lens.Dispose()
+        }
+
+        $dot = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(37, 99, 235))
+        try {
+            $graphics.FillEllipse($dot, (New-Object System.Drawing.Rectangle 30, 27, 4, 4))
+        }
+        finally {
+            $dot.Dispose()
+        }
+
+        $crop = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(250, 204, 21)), 4
+        try {
+            $crop.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+            $crop.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+            $graphics.DrawLine($crop, 8, 54, 24, 54)
+            $graphics.DrawLine($crop, 8, 54, 8, 38)
+            $graphics.DrawLine($crop, 56, 10, 40, 10)
+            $graphics.DrawLine($crop, 56, 10, 56, 26)
+        }
+        finally {
+            $crop.Dispose()
+        }
+
+        $handle = $bitmap.GetHicon()
+        return [System.Drawing.Icon]::FromHandle($handle)
+    }
+    finally {
+        $graphics.Dispose()
+        $bitmap.Dispose()
+    }
+}
+
+function New-RoundedPath {
+    param(
+        [System.Drawing.Rectangle]$Rect,
+        [int]$Radius
+    )
+
+    $diameter = $Radius * 2
+    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $path.AddArc($Rect.Left, $Rect.Top, $diameter, $diameter, 180, 90)
+    $path.AddArc($Rect.Right - $diameter, $Rect.Top, $diameter, $diameter, 270, 90)
+    $path.AddArc($Rect.Right - $diameter, $Rect.Bottom - $diameter, $diameter, $diameter, 0, 90)
+    $path.AddArc($Rect.Left, $Rect.Bottom - $diameter, $diameter, $diameter, 90, 90)
+    $path.CloseFigure()
+    return $path
+}
+
 $hotkeyId = 1
 $modifierMask = Get-ModifierMask -Names $Modifiers
 $keyCode = [System.Windows.Forms.Keys]::$Key
@@ -2064,14 +2272,24 @@ Write-Host "Output: $OutputDir"
 Write-Host "Drag to select an area. Press Esc to cancel."
 Write-Host "Close this window to stop."
 
+$trayIcon = New-TrayIcon
+
 try {
     $msg = New-Object HotkeyNative+MSG
     while ([HotkeyNative]::GetMessage([ref]$msg, [IntPtr]::Zero, 0, 0) -ne 0) {
         if ($msg.message -eq [HotkeyNative]::WM_HOTKEY -and $msg.wParam.ToUInt32() -eq $hotkeyId) {
             Start-RegionScreenshot -Directory $OutputDir
         }
+        else {
+            [HotkeyNative]::TranslateMessage([ref]$msg) | Out-Null
+            [HotkeyNative]::DispatchMessage([ref]$msg) | Out-Null
+        }
     }
 }
 finally {
+    if ($null -ne $trayIcon) {
+        $trayIcon.Visible = $false
+        $trayIcon.Dispose()
+    }
     [HotkeyNative]::UnregisterHotKey([IntPtr]::Zero, $hotkeyId) | Out-Null
 }
