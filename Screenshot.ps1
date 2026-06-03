@@ -289,6 +289,7 @@ public sealed class CapturePreview : Form {
     private readonly string imagePath;
     private readonly string outputDir;
     private readonly Bitmap previewImage;
+    private readonly System.Collections.Generic.List<Bitmap> undoStack = new System.Collections.Generic.List<Bitmap>();
     private readonly Bitmap backgroundImage;
     private readonly int borderSize = 1;
     private readonly int toolbarHeight = 54;
@@ -338,7 +339,7 @@ public sealed class CapturePreview : Form {
         int buttonWidth = 42;
         int buttonHeight = 34;
         int gap = 6;
-        int buttonCount = showLongButton ? 9 : 8;
+        int buttonCount = showLongButton ? 10 : 9;
         int totalWidth = buttonWidth * buttonCount + gap * (buttonCount - 1);
         int maxPreviewWidth = Math.Max(120, screen.Width - 32 - borderSize * 2);
         int maxPreviewHeight = Math.Max(120, screen.Height - toolbarHeight - 32 - borderSize * 2);
@@ -386,33 +387,37 @@ public sealed class CapturePreview : Form {
 
         int left = Math.Max(10, windowWidth - totalWidth - 10);
 
-        AddButton(bar, "rect", left, buttonWidth, buttonHeight, "Rectangle", delegate {
-            drawMode = drawMode == "rect" ? null : "rect";
-            ShowColorPalette(bar, left, buttonWidth);
+        AddButton(bar, "undo", left, buttonWidth, buttonHeight, "Undo", delegate {
+            UndoLastEdit();
         });
 
-        AddButton(bar, "ellipse", left + buttonWidth + gap, buttonWidth, buttonHeight, "Ellipse", delegate {
-            drawMode = drawMode == "ellipse" ? null : "ellipse";
+        AddButton(bar, "rect", left + buttonWidth + gap, buttonWidth, buttonHeight, "Rectangle", delegate {
+            drawMode = drawMode == "rect" ? null : "rect";
             ShowColorPalette(bar, left + buttonWidth + gap, buttonWidth);
         });
 
-        AddButton(bar, "arrow", left + (buttonWidth + gap) * 2, buttonWidth, buttonHeight, "Arrow", delegate {
-            drawMode = drawMode == "arrow" ? null : "arrow";
+        AddButton(bar, "ellipse", left + (buttonWidth + gap) * 2, buttonWidth, buttonHeight, "Ellipse", delegate {
+            drawMode = drawMode == "ellipse" ? null : "ellipse";
             ShowColorPalette(bar, left + (buttonWidth + gap) * 2, buttonWidth);
         });
 
-        AddButton(bar, "text", left + (buttonWidth + gap) * 3, buttonWidth, buttonHeight, "Text", delegate {
-            drawMode = drawMode == "text" ? null : "text";
+        AddButton(bar, "arrow", left + (buttonWidth + gap) * 3, buttonWidth, buttonHeight, "Arrow", delegate {
+            drawMode = drawMode == "arrow" ? null : "arrow";
             ShowColorPalette(bar, left + (buttonWidth + gap) * 3, buttonWidth);
         });
 
-        AddButton(bar, "ocr", left + (buttonWidth + gap) * 4, buttonWidth, buttonHeight, "Extract text", delegate {
+        AddButton(bar, "text", left + (buttonWidth + gap) * 4, buttonWidth, buttonHeight, "Text", delegate {
+            drawMode = drawMode == "text" ? null : "text";
+            ShowColorPalette(bar, left + (buttonWidth + gap) * 4, buttonWidth);
+        });
+
+        AddButton(bar, "ocr", left + (buttonWidth + gap) * 5, buttonWidth, buttonHeight, "Extract text", delegate {
             ExtractTextRequested = true;
             DialogResult = DialogResult.Retry;
             Close();
         });
 
-        int index = 5;
+        int index = 6;
         if (showLongButton) {
             AddButton(bar, "long", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Long screenshot", delegate {
                 LongScreenshotRequested = true;
@@ -449,6 +454,9 @@ public sealed class CapturePreview : Form {
         if (disposing) {
             backgroundImage.Dispose();
             previewImage.Dispose();
+            foreach (Bitmap snapshot in undoStack) {
+                snapshot.Dispose();
+            }
         }
         base.Dispose(disposing);
     }
@@ -585,15 +593,24 @@ public sealed class CapturePreview : Form {
     }
 
     private void CommitShape() {
+        if (drawMode == "arrow") {
+            if (Distance(drawStart, drawCurrent) < 4) {
+                return;
+            }
+        }
+        else {
+            Rectangle previewRectCheck = GetPreviewRectangle(drawStart, drawCurrent);
+            if (previewRectCheck.Width < 3 || previewRectCheck.Height < 3) {
+                return;
+            }
+        }
+
+        PushUndoState();
         using (Graphics g = Graphics.FromImage(previewImage)) {
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             int stroke = Math.Max(2, (int)Math.Round(3.0 / Math.Max(0.25, previewScale)));
             using (Pen pen = new Pen(drawColor, stroke)) {
                 if (drawMode == "arrow") {
-                    if (Distance(drawStart, drawCurrent) < 4) {
-                        return;
-                    }
-
                     Point imageStart = PreviewToImagePoint(drawStart);
                     Point imageEnd = PreviewToImagePoint(drawCurrent);
                     using (System.Drawing.Drawing2D.AdjustableArrowCap cap = new System.Drawing.Drawing2D.AdjustableArrowCap(
@@ -674,6 +691,7 @@ public sealed class CapturePreview : Form {
             return;
         }
 
+        PushUndoState();
         Point imagePoint = PreviewToImagePoint(activeTextPoint);
         using (Graphics g = Graphics.FromImage(previewImage)) {
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -685,6 +703,34 @@ public sealed class CapturePreview : Form {
                 }
             }
         }
+        picture.Image = previewImage;
+        picture.Invalidate();
+    }
+
+    private void PushUndoState() {
+        undoStack.Add((Bitmap)previewImage.Clone());
+        if (undoStack.Count > 20) {
+            Bitmap oldest = undoStack[0];
+            undoStack.RemoveAt(0);
+            oldest.Dispose();
+        }
+    }
+
+    private void UndoLastEdit() {
+        CancelActiveTextBox();
+        if (undoStack.Count == 0) {
+            return;
+        }
+
+        int index = undoStack.Count - 1;
+        Bitmap snapshot = undoStack[index];
+        undoStack.RemoveAt(index);
+        using (Graphics g = Graphics.FromImage(previewImage)) {
+            g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+            g.DrawImage(snapshot, new Rectangle(0, 0, previewImage.Width, previewImage.Height),
+                new Rectangle(0, 0, snapshot.Width, snapshot.Height), GraphicsUnit.Pixel);
+        }
+        snapshot.Dispose();
         picture.Image = previewImage;
         picture.Invalidate();
     }
@@ -1554,6 +1600,9 @@ public sealed class PrettyButton : Button {
         if (IconKind == "cancel") {
             iconColor = Color.FromArgb(220, 38, 38);
         }
+        else if (IconKind == "undo") {
+            iconColor = Color.FromArgb(71, 85, 105);
+        }
         else if (IconKind == "done") {
             iconColor = Color.FromArgb(22, 163, 74);
         }
@@ -1585,6 +1634,9 @@ public sealed class PrettyButton : Button {
 
             if (IconKind == "ocr") {
                 DrawOcrIcon(graphics, pen, cx, cy);
+            }
+            else if (IconKind == "undo") {
+                DrawUndoIcon(graphics, pen, cx, cy);
             }
             else if (IconKind == "rect") {
                 graphics.DrawRectangle(pen, new Rectangle(cx - 10, cy - 7, 20, 14));
@@ -1661,6 +1713,25 @@ public sealed class PrettyButton : Button {
         graphics.DrawLine(pen, cx, cy + 3, cx, cy + 10);
         graphics.DrawLine(pen, cx - 4, cy + 6, cx, cy + 10);
         graphics.DrawLine(pen, cx + 4, cy + 6, cx, cy + 10);
+    }
+
+    private void DrawUndoIcon(Graphics graphics, Pen pen, int cx, int cy) {
+        System.Drawing.Drawing2D.GraphicsPath path = new System.Drawing.Drawing2D.GraphicsPath();
+        try {
+            path.AddBezier(
+                new Point(cx + 9, cy + 6),
+                new Point(cx + 4, cy - 4),
+                new Point(cx - 5, cy - 4),
+                new Point(cx - 8, cy)
+            );
+            graphics.DrawPath(pen, path);
+        }
+        finally {
+            path.Dispose();
+        }
+
+        graphics.DrawLine(pen, cx - 8, cy, cx - 2, cy - 6);
+        graphics.DrawLine(pen, cx - 8, cy, cx - 2, cy + 6);
     }
 
     private Color GetSwatchColor(string kind) {
