@@ -102,9 +102,11 @@ public sealed class ScreenSelector : Form {
     private bool selecting;
     private Rectangle finalSelection;
     private Bitmap selectedImage;
+    private Panel selectorToolbar;
 
     public string SavedPath { get; private set; }
     public string CapturePath { get; private set; }
+    public string DesktopPath { get; private set; }
     public Rectangle CaptureBounds { get; private set; }
     public Point PreviewLocation { get; private set; }
 
@@ -126,12 +128,20 @@ public sealed class ScreenSelector : Form {
         Cursor = Cursors.Cross;
         Bounds = virtualScreen;
         BackColor = Color.Black;
+        CreateSelectionToolbar();
     }
 
     protected override void Dispose(bool disposing) {
         if (disposing) {
             if (selectedImage != null) {
                 selectedImage.Dispose();
+            }
+            if (!String.IsNullOrEmpty(DesktopPath) && System.IO.File.Exists(DesktopPath)) {
+                try {
+                    System.IO.File.Delete(DesktopPath);
+                }
+                catch {
+                }
             }
             desktop.Dispose();
         }
@@ -148,6 +158,9 @@ public sealed class ScreenSelector : Form {
         if (e.KeyCode == Keys.Escape) {
             DialogResult = DialogResult.Cancel;
             Close();
+        }
+        else if (e.KeyCode == Keys.Enter && HasFinalSelection()) {
+            CompleteSelection();
         }
         else if (e.Control && e.Alt && e.KeyCode == Keys.A) {
             DialogResult = DialogResult.Abort;
@@ -189,18 +202,22 @@ public sealed class ScreenSelector : Form {
             return;
         }
 
-        SetFinalSelection(selection);
-        SaveCaptureTemp();
-        SetPreviewLocation(selection);
-        DialogResult = DialogResult.OK;
-        Close();
+        finalSelection = selection;
+        CompleteSelection();
+    }
+
+    protected override void OnMouseDoubleClick(MouseEventArgs e) {
+        if (e.Button == MouseButtons.Left && HasFinalSelection() && finalSelection.Contains(e.Location)) {
+            CompleteSelection();
+        }
+        base.OnMouseDoubleClick(e);
     }
 
     protected override void OnPaint(PaintEventArgs e) {
         Graphics g = e.Graphics;
         g.DrawImageUnscaled(desktop, 0, 0);
 
-        Rectangle selection = GetSelection();
+        Rectangle selection = HasFinalSelection() ? finalSelection : GetSelection();
         using (Brush dim = new SolidBrush(Color.FromArgb(115, Color.Black))) {
             if (selection.Width <= 0 || selection.Height <= 0) {
                 g.FillRectangle(dim, ClientRectangle);
@@ -239,6 +256,78 @@ public sealed class ScreenSelector : Form {
         return new Rectangle(x, y, width, height);
     }
 
+    private bool HasFinalSelection() {
+        return finalSelection.Width >= 3 && finalSelection.Height >= 3;
+    }
+
+    private void CompleteSelection() {
+        if (!HasFinalSelection()) {
+            return;
+        }
+
+        SetFinalSelection(finalSelection);
+        SaveDesktopTemp();
+        SaveCaptureTemp();
+        SetPreviewLocation(finalSelection);
+        DialogResult = DialogResult.OK;
+        Close();
+    }
+
+    private void CreateSelectionToolbar() {
+        selectorToolbar = new Panel();
+        selectorToolbar.BackColor = Color.FromArgb(238, 255, 255, 255);
+        selectorToolbar.Size = new Size(92, 42);
+        selectorToolbar.Visible = false;
+
+        PrettyButton cancel = new PrettyButton();
+        cancel.IconKind = "cancel";
+        cancel.Bounds = new Rectangle(6, 4, 38, 34);
+        cancel.Click += delegate {
+            DialogResult = DialogResult.Cancel;
+            Close();
+        };
+        selectorToolbar.Controls.Add(cancel);
+
+        PrettyButton done = new PrettyButton();
+        done.IconKind = "done";
+        done.Bounds = new Rectangle(48, 4, 38, 34);
+        done.Click += delegate {
+            CompleteSelection();
+        };
+        selectorToolbar.Controls.Add(done);
+
+        Controls.Add(selectorToolbar);
+    }
+
+    private void ShowSelectionToolbar() {
+        UpdateSelectionToolbar();
+        selectorToolbar.Visible = true;
+        selectorToolbar.BringToFront();
+    }
+
+    private void HideSelectionToolbar() {
+        if (selectorToolbar != null) {
+            selectorToolbar.Visible = false;
+        }
+    }
+
+    private void UpdateSelectionToolbar() {
+        if (selectorToolbar == null || !HasFinalSelection()) {
+            return;
+        }
+
+        int margin = 8;
+        int left = finalSelection.Right - selectorToolbar.Width;
+        int top = finalSelection.Bottom + 8;
+        if (top + selectorToolbar.Height > ClientSize.Height - margin) {
+            top = finalSelection.Top - selectorToolbar.Height - 8;
+        }
+
+        left = Math.Max(margin, Math.Min(left, ClientSize.Width - selectorToolbar.Width - margin));
+        top = Math.Max(margin, Math.Min(top, ClientSize.Height - selectorToolbar.Height - margin));
+        selectorToolbar.Location = new Point(left, top);
+    }
+
     private void SetFinalSelection(Rectangle selection) {
         finalSelection = selection;
         CaptureBounds = new Rectangle(virtualScreen.Left + selection.Left, virtualScreen.Top + selection.Top, selection.Width, selection.Height);
@@ -259,6 +348,17 @@ public sealed class ScreenSelector : Form {
         string fileName = "ocr-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png";
         CapturePath = System.IO.Path.Combine(dir, fileName);
         selectedImage.Save(CapturePath, ImageFormat.Png);
+    }
+
+    private void SaveDesktopTemp() {
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Screenshot");
+        if (!System.IO.Directory.Exists(dir)) {
+            System.IO.Directory.CreateDirectory(dir);
+        }
+
+        string fileName = "desktop-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".bmp";
+        DesktopPath = System.IO.Path.Combine(dir, fileName);
+        desktop.Save(DesktopPath, ImageFormat.Bmp);
     }
 
     private void SetPreviewLocation(Rectangle selection) {
@@ -296,36 +396,64 @@ public sealed class CapturePreview : Form {
     private readonly Point previewLocation;
     private readonly bool showLongButton;
     private readonly double previewScale;
+    private readonly Rectangle virtualScreen;
+    private Rectangle currentCaptureBounds;
+    private Rectangle moveStartCaptureBounds;
+    private Panel previewContainer;
+    private Panel previewToolbar;
     private PictureBox picture;
     private ColorPalettePanel colorPalette;
     private string drawMode;
     private Color drawColor = Color.FromArgb(239, 68, 68);
     private TextBox activeTextBox;
     private Point activeTextPoint;
+    private bool hasEdited;
+    private bool movingPreview;
+    private Point moveStartScreen;
+    private Point moveStartLocation;
+    private Point lastMoveLocation;
     private bool drawing;
     private Point drawStart;
     private Point drawCurrent;
 
     public bool ExtractTextRequested { get; private set; }
     public bool LongScreenshotRequested { get; private set; }
+    public Rectangle CaptureBounds {
+        get { return currentCaptureBounds; }
+    }
 
     public string SavedPath { get; private set; }
 
     public CapturePreview(string imagePath, string outputDir, Point location) : this(imagePath, outputDir, location, true) {
     }
 
-    public CapturePreview(string imagePath, string outputDir, Point location, bool showLongButton) {
+    public CapturePreview(string imagePath, string outputDir, Point location, bool showLongButton) : this(imagePath, outputDir, location, showLongButton, Rectangle.Empty) {
+    }
+
+    public CapturePreview(string imagePath, string outputDir, Point location, bool showLongButton, Rectangle captureBounds) : this(imagePath, outputDir, location, showLongButton, captureBounds, null) {
+    }
+
+    public CapturePreview(string imagePath, string outputDir, Point location, bool showLongButton, Rectangle captureBounds, string backgroundPath) {
         this.imagePath = imagePath;
         this.outputDir = outputDir;
         this.previewLocation = location;
         this.showLongButton = showLongButton;
+        this.currentCaptureBounds = captureBounds;
         using (Image loaded = Image.FromFile(imagePath)) {
             this.previewImage = new Bitmap(loaded);
         }
-        Rectangle screen = SystemInformation.VirtualScreen;
-        this.backgroundImage = new Bitmap(screen.Width, screen.Height);
-        using (Graphics g = Graphics.FromImage(backgroundImage)) {
-            g.CopyFromScreen(screen.Left, screen.Top, 0, 0, screen.Size);
+        this.virtualScreen = SystemInformation.VirtualScreen;
+        Rectangle screen = virtualScreen;
+        if (!String.IsNullOrEmpty(backgroundPath) && System.IO.File.Exists(backgroundPath)) {
+            using (Image loadedBackground = Image.FromFile(backgroundPath)) {
+                this.backgroundImage = new Bitmap(loadedBackground);
+            }
+        }
+        else {
+            this.backgroundImage = new Bitmap(screen.Width, screen.Height);
+            using (Graphics g = Graphics.FromImage(backgroundImage)) {
+                g.CopyFromScreen(screen.Left, screen.Top, 0, 0, screen.Size);
+            }
         }
 
         StartPosition = FormStartPosition.Manual;
@@ -354,20 +482,26 @@ public sealed class CapturePreview : Form {
         int contentLeft = Math.Max(8, Math.Min(location.X - Bounds.Left, Width - previewWidth - 8));
         int contentTop = Math.Max(8, Math.Min(location.Y - Bounds.Top, Height - previewHeight - 8));
 
-        Panel container = new Panel();
-        container.BackColor = Color.FromArgb(245, 248, 252);
-        container.Bounds = new Rectangle(contentLeft, contentTop, previewWidth, frameHeight);
-        container.Paint += delegate(object sender, PaintEventArgs e) {
+        previewContainer = new Panel();
+        previewContainer.BackColor = Color.FromArgb(245, 248, 252);
+        previewContainer.Bounds = new Rectangle(contentLeft, contentTop, previewWidth, frameHeight);
+        previewContainer.MouseDown += PreviewDragMouseDown;
+        previewContainer.MouseMove += PreviewDragMouseMove;
+        previewContainer.MouseUp += PreviewDragMouseUp;
+        previewContainer.Paint += delegate(object sender, PaintEventArgs e) {
             using (Pen border = new Pen(Color.FromArgb(96, 165, 250))) {
-                e.Graphics.DrawRectangle(border, 0, 0, container.Width - 1, container.Height - 1);
+                e.Graphics.DrawRectangle(border, 0, 0, previewContainer.Width - 1, previewContainer.Height - 1);
             }
         };
-        Controls.Add(container);
+        Controls.Add(previewContainer);
 
         Panel imageFrame = new Panel();
         imageFrame.BackColor = Color.White;
         imageFrame.Bounds = new Rectangle(borderSize + (windowWidth - imageAreaWidth) / 2, borderSize, imageAreaWidth, imageAreaHeight);
-        container.Controls.Add(imageFrame);
+        imageFrame.MouseDown += PreviewDragMouseDown;
+        imageFrame.MouseMove += PreviewDragMouseMove;
+        imageFrame.MouseUp += PreviewDragMouseUp;
+        previewContainer.Controls.Add(imageFrame);
 
         picture = new PictureBox();
         picture.Image = previewImage;
@@ -380,38 +514,41 @@ public sealed class CapturePreview : Form {
         picture.Paint += PicturePaint;
         imageFrame.Controls.Add(picture);
 
-        Panel bar = new Panel();
-        bar.BackColor = Color.Transparent;
-        bar.Bounds = new Rectangle(contentLeft + borderSize, contentTop + frameHeight, windowWidth, toolbarHeight);
-        Controls.Add(bar);
+        previewToolbar = new Panel();
+        previewToolbar.BackColor = Color.Transparent;
+        previewToolbar.Bounds = new Rectangle(contentLeft + borderSize, contentTop + frameHeight, windowWidth, toolbarHeight);
+        previewToolbar.MouseDown += PreviewDragMouseDown;
+        previewToolbar.MouseMove += PreviewDragMouseMove;
+        previewToolbar.MouseUp += PreviewDragMouseUp;
+        Controls.Add(previewToolbar);
 
         int left = Math.Max(10, windowWidth - totalWidth - 10);
 
-        AddButton(bar, "undo", left, buttonWidth, buttonHeight, "Undo", delegate {
+        AddButton(previewToolbar, "undo", left, buttonWidth, buttonHeight, "Undo", delegate {
             UndoLastEdit();
         });
 
-        AddButton(bar, "rect", left + buttonWidth + gap, buttonWidth, buttonHeight, "Rectangle", delegate {
+        AddButton(previewToolbar, "rect", left + buttonWidth + gap, buttonWidth, buttonHeight, "Rectangle", delegate {
             drawMode = drawMode == "rect" ? null : "rect";
-            ShowColorPalette(bar, left + buttonWidth + gap, buttonWidth);
+            ShowColorPalette(previewToolbar, left + buttonWidth + gap, buttonWidth);
         });
 
-        AddButton(bar, "ellipse", left + (buttonWidth + gap) * 2, buttonWidth, buttonHeight, "Ellipse", delegate {
+        AddButton(previewToolbar, "ellipse", left + (buttonWidth + gap) * 2, buttonWidth, buttonHeight, "Ellipse", delegate {
             drawMode = drawMode == "ellipse" ? null : "ellipse";
-            ShowColorPalette(bar, left + (buttonWidth + gap) * 2, buttonWidth);
+            ShowColorPalette(previewToolbar, left + (buttonWidth + gap) * 2, buttonWidth);
         });
 
-        AddButton(bar, "arrow", left + (buttonWidth + gap) * 3, buttonWidth, buttonHeight, "Arrow", delegate {
+        AddButton(previewToolbar, "arrow", left + (buttonWidth + gap) * 3, buttonWidth, buttonHeight, "Arrow", delegate {
             drawMode = drawMode == "arrow" ? null : "arrow";
-            ShowColorPalette(bar, left + (buttonWidth + gap) * 3, buttonWidth);
+            ShowColorPalette(previewToolbar, left + (buttonWidth + gap) * 3, buttonWidth);
         });
 
-        AddButton(bar, "text", left + (buttonWidth + gap) * 4, buttonWidth, buttonHeight, "Text", delegate {
+        AddButton(previewToolbar, "text", left + (buttonWidth + gap) * 4, buttonWidth, buttonHeight, "Text", delegate {
             drawMode = drawMode == "text" ? null : "text";
-            ShowColorPalette(bar, left + (buttonWidth + gap) * 4, buttonWidth);
+            ShowColorPalette(previewToolbar, left + (buttonWidth + gap) * 4, buttonWidth);
         });
 
-        AddButton(bar, "ocr", left + (buttonWidth + gap) * 5, buttonWidth, buttonHeight, "Extract text", delegate {
+        AddButton(previewToolbar, "ocr", left + (buttonWidth + gap) * 5, buttonWidth, buttonHeight, "Extract text", delegate {
             ExtractTextRequested = true;
             DialogResult = DialogResult.Retry;
             Close();
@@ -419,7 +556,7 @@ public sealed class CapturePreview : Form {
 
         int index = 6;
         if (showLongButton) {
-            AddButton(bar, "long", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Long screenshot", delegate {
+            AddButton(previewToolbar, "long", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Long screenshot", delegate {
                 LongScreenshotRequested = true;
                 DialogResult = DialogResult.Ignore;
                 Close();
@@ -427,7 +564,7 @@ public sealed class CapturePreview : Form {
             index++;
         }
 
-        AddButton(bar, "save", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Save to local", delegate {
+        AddButton(previewToolbar, "save", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Save to local", delegate {
             SaveImage();
             if (!String.IsNullOrEmpty(SavedPath)) {
                 DialogResult = DialogResult.Yes;
@@ -436,13 +573,13 @@ public sealed class CapturePreview : Form {
         });
         index++;
 
-        AddButton(bar, "cancel", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Cancel", delegate {
+        AddButton(previewToolbar, "cancel", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Cancel", delegate {
             DialogResult = DialogResult.Cancel;
             Close();
         });
         index++;
 
-        AddButton(bar, "done", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Done", delegate {
+        AddButton(previewToolbar, "done", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Done", delegate {
             CopyImage();
             DialogResult = DialogResult.OK;
             Close();
@@ -459,6 +596,14 @@ public sealed class CapturePreview : Form {
             }
         }
         base.Dispose(disposing);
+    }
+
+    protected override CreateParams CreateParams {
+        get {
+            CreateParams cp = base.CreateParams;
+            cp.ExStyle |= 0x02000000;
+            return cp;
+        }
     }
 
     protected override void OnPaintBackground(PaintEventArgs e) {
@@ -485,6 +630,141 @@ public sealed class CapturePreview : Form {
         ToolTip tooltip = new ToolTip();
         tooltip.SetToolTip(button, tip);
         parent.Controls.Add(button);
+    }
+
+    private bool CanMovePreview() {
+        return !hasEdited && !drawing && activeTextBox == null && String.IsNullOrEmpty(drawMode) && currentCaptureBounds.Width > 0 && currentCaptureBounds.Height > 0;
+    }
+
+    private void PreviewDragMouseDown(object sender, MouseEventArgs e) {
+        BeginPreviewMove(sender as Control, e);
+    }
+
+    private void PreviewDragMouseMove(object sender, MouseEventArgs e) {
+        MovePreview(sender as Control, e);
+    }
+
+    private void PreviewDragMouseUp(object sender, MouseEventArgs e) {
+        EndPreviewMove();
+    }
+
+    private void BeginPreviewMove(Control source, MouseEventArgs e) {
+        if (source == null || e.Button != MouseButtons.Left || !CanMovePreview()) {
+            return;
+        }
+
+        movingPreview = true;
+        moveStartScreen = source.PointToScreen(e.Location);
+        moveStartLocation = previewContainer.Location;
+        lastMoveLocation = previewContainer.Location;
+        moveStartCaptureBounds = currentCaptureBounds;
+        Cursor = Cursors.SizeAll;
+        HideColorPalette();
+    }
+
+    private void MovePreview(Control source, MouseEventArgs e) {
+        if (!movingPreview || source == null) {
+            return;
+        }
+
+        Point currentScreen = source.PointToScreen(e.Location);
+        Point targetLocation = ClampPreviewLocation(moveStartLocation.X + currentScreen.X - moveStartScreen.X, moveStartLocation.Y + currentScreen.Y - moveStartScreen.Y);
+        if (targetLocation == lastMoveLocation) {
+            return;
+        }
+
+        lastMoveLocation = targetLocation;
+        int actualDx = targetLocation.X - moveStartLocation.X;
+        int actualDy = targetLocation.Y - moveStartLocation.Y;
+        Rectangle movedBounds = new Rectangle(moveStartCaptureBounds.X + actualDx, moveStartCaptureBounds.Y + actualDy, moveStartCaptureBounds.Width, moveStartCaptureBounds.Height);
+        RefreshCaptureImage(movedBounds);
+        MovePreviewTo(targetLocation);
+    }
+
+    private void EndPreviewMove() {
+        if (!movingPreview) {
+            return;
+        }
+
+        movingPreview = false;
+        Cursor = Cursors.Default;
+        Rectangle dirty = GetPreviewGroupBounds();
+        dirty.Inflate(24, 24);
+        Invalidate(dirty, true);
+        Update();
+    }
+
+    private Point ClampPreviewLocation(int left, int top) {
+        if (previewContainer == null || previewToolbar == null) {
+            return Point.Empty;
+        }
+
+        int margin = 8;
+        int groupWidth = Math.Max(previewContainer.Width, borderSize + previewToolbar.Width);
+        int groupHeight = previewContainer.Height + previewToolbar.Height;
+        int maxLeft = Math.Max(margin, ClientSize.Width - groupWidth - margin);
+        int maxTop = Math.Max(margin, ClientSize.Height - groupHeight - margin);
+        int x = Math.Max(margin, Math.Min(left, maxLeft));
+        int y = Math.Max(margin, Math.Min(top, maxTop));
+        return new Point(x, y);
+    }
+
+    private void MovePreviewTo(Point location) {
+        if (previewContainer == null || previewToolbar == null) {
+            return;
+        }
+
+        if (previewContainer.Location == location) {
+            return;
+        }
+
+        Rectangle oldBounds = GetPreviewGroupBounds();
+        SuspendLayout();
+        previewContainer.SetBounds(location.X, location.Y, previewContainer.Width, previewContainer.Height, BoundsSpecified.Location);
+        previewToolbar.SetBounds(location.X + borderSize, location.Y + previewContainer.Height, previewToolbar.Width, previewToolbar.Height, BoundsSpecified.Location);
+        ResumeLayout(false);
+        Rectangle newBounds = GetPreviewGroupBounds();
+        oldBounds.Inflate(24, 24);
+        newBounds.Inflate(24, 24);
+        Rectangle dirty = Rectangle.Union(oldBounds, newBounds);
+        Invalidate(dirty, true);
+    }
+
+    private Rectangle GetPreviewGroupBounds() {
+        Rectangle bounds = previewContainer.Bounds;
+        bounds = Rectangle.Union(bounds, previewToolbar.Bounds);
+        return bounds;
+    }
+
+    private void RefreshCaptureImage(Rectangle requestedBounds) {
+        if (requestedBounds.Width <= 0 || requestedBounds.Height <= 0) {
+            return;
+        }
+
+        int x = Math.Max(virtualScreen.Left, Math.Min(virtualScreen.Right - requestedBounds.Width, requestedBounds.X));
+        int y = Math.Max(virtualScreen.Top, Math.Min(virtualScreen.Bottom - requestedBounds.Height, requestedBounds.Y));
+        Rectangle newBounds = new Rectangle(x, y, requestedBounds.Width, requestedBounds.Height);
+        if (newBounds.Equals(currentCaptureBounds)) {
+            return;
+        }
+
+        currentCaptureBounds = newBounds;
+        Rectangle sourceRect = new Rectangle(
+            currentCaptureBounds.Left - virtualScreen.Left,
+            currentCaptureBounds.Top - virtualScreen.Top,
+            currentCaptureBounds.Width,
+            currentCaptureBounds.Height
+        );
+        if (sourceRect.Right > backgroundImage.Width || sourceRect.Bottom > backgroundImage.Height) {
+            return;
+        }
+
+        using (Graphics g = Graphics.FromImage(previewImage)) {
+            g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+            g.DrawImage(backgroundImage, new Rectangle(0, 0, previewImage.Width, previewImage.Height), sourceRect, GraphicsUnit.Pixel);
+        }
+
+        picture.Invalidate();
     }
 
     private void ShowColorPalette(Control bar, int anchorLeft, int anchorWidth) {
@@ -526,6 +806,7 @@ public sealed class CapturePreview : Form {
 
     private void PictureMouseDown(object sender, MouseEventArgs e) {
         if (String.IsNullOrEmpty(drawMode) || e.Button != MouseButtons.Left) {
+            BeginPreviewMove(sender as Control, e);
             return;
         }
 
@@ -541,6 +822,11 @@ public sealed class CapturePreview : Form {
     }
 
     private void PictureMouseMove(object sender, MouseEventArgs e) {
+        if (movingPreview) {
+            MovePreview(sender as Control, e);
+            return;
+        }
+
         if (!drawing) {
             return;
         }
@@ -550,6 +836,11 @@ public sealed class CapturePreview : Form {
     }
 
     private void PictureMouseUp(object sender, MouseEventArgs e) {
+        if (movingPreview) {
+            EndPreviewMove();
+            return;
+        }
+
         if (!drawing || e.Button != MouseButtons.Left) {
             return;
         }
@@ -708,6 +999,7 @@ public sealed class CapturePreview : Form {
     }
 
     private void PushUndoState() {
+        hasEdited = true;
         undoStack.Add((Bitmap)previewImage.Clone());
         if (undoStack.Count > 20) {
             Bitmap oldest = undoStack[0];
@@ -2097,7 +2389,7 @@ function Start-RegionScreenshot {
         if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $selector.CapturePath) {
             $keepPreviewOpen = $true
             while ($keepPreviewOpen) {
-                $preview = New-Object CapturePreview -ArgumentList @($selector.CapturePath, $Directory, $selector.PreviewLocation)
+                $preview = New-Object CapturePreview -ArgumentList @($selector.CapturePath, $Directory, $selector.PreviewLocation, $true, $selector.CaptureBounds, $selector.DesktopPath)
                 try {
                 $previewResult = $preview.ShowDialog()
                 if ($previewResult -eq [System.Windows.Forms.DialogResult]::Retry) {
@@ -2127,7 +2419,7 @@ function Start-RegionScreenshot {
                 }
                 elseif ($previewResult -eq [System.Windows.Forms.DialogResult]::Ignore) {
                     $keepPreviewOpen = $false
-                    $longWindow = New-Object LongScreenshotSession -ArgumentList @($selector.CaptureBounds, $Directory)
+                    $longWindow = New-Object LongScreenshotSession -ArgumentList @($preview.CaptureBounds, $Directory)
                     try {
                         $longWindow.ShowDialog() | Out-Null
                         if ($longWindow.Action -eq "Preview" -and $longWindow.CapturePath) {

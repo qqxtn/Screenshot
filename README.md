@@ -12,6 +12,8 @@
 - 拖拽鼠标选择矩形截图区域
 - 支持长截图
 - 支持 OCR 文字识别
+- 框选完成进入预览后，未编辑前可拖动截图框调整截图范围
+- 长截图会使用移动后的截图框位置继续向下截图
 - 支持撤销上一步标注
 - 支持矩形、椭圆、箭头和文字标注
 - 选择标注工具后，可在按钮上方弹出的竖向颜色面板中选择颜色
@@ -56,6 +58,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Screenshot.ps1
 
 点击矩形、椭圆、箭头或文字按钮后，按钮上方会弹出竖向颜色面板。可选颜色包括红色、黄色、绿色、蓝色、紫色和黑色。
 
+### 移动截图框
+
+框选完成进入预览后，可以在未编辑前拖动截图框调整截图范围。开始标注后，截图框位置会锁定。
+
+拖动截图框时，程序会使用第一次框选时保存的完整桌面底图来更新框内内容，因此浏览器 PDF、地图等动态页面在移动时也能保持原始画面。
+
 ### 标注与撤销
 
 - 矩形和椭圆：按住鼠标拖拽绘制。
@@ -68,6 +76,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Screenshot.ps1
 ### 长截图
 
 点击预览窗口中的长截图按钮后，程序会自动滚动并拼接成长图。完成后会打开最终预览，可继续标注、保存或复制。
+
+如果在预览中移动过截图框，长截图会从移动后的截图范围开始继续向下截图，而不是使用最初框选的位置。
 
 长截图适合网页、文档、PDF、聊天记录等可滚动内容。实际效果会受到目标程序滚动方式、渲染速度和重复内容的影响。
 
@@ -114,6 +124,8 @@ OCR 使用 Windows 内置 OCR 引擎。识别效果取决于图片清晰度、�
 - Drag to select a rectangular capture area
 - Long screenshot support
 - OCR text extraction
+- Move the screenshot frame before editing to adjust the capture area
+- Long screenshots use the moved screenshot frame position
 - Undo the previous annotation step
 - Rectangle, ellipse, arrow, and text annotations
 - Popup vertical color picker after selecting an annotation tool
@@ -158,6 +170,12 @@ After selecting an area, the preview toolbar includes:
 
 Click the rectangle, ellipse, arrow, or text button to open a vertical color palette above the tool button. Available colors: red, yellow, green, blue, purple, and black.
 
+### Moving The Screenshot Frame
+
+After selecting an area, drag the screenshot frame before editing to adjust the capture area. Once an annotation is made, the frame is locked.
+
+While moving the frame, the app updates the frame content from the full desktop snapshot captured at the start, so browser PDFs, maps, and other dynamic pages keep the original screen content while being adjusted.
+
 ### Annotation And Undo
 
 - Rectangle and ellipse: drag to draw.
@@ -170,6 +188,8 @@ For text input, press `Ctrl + Enter` to commit text, click elsewhere to commit t
 ### Long Screenshots
 
 Click the long screenshot button in the preview window to automatically scroll and stitch a long image. When finished, the final preview opens, where you can annotate, save, or copy the image.
+
+If the screenshot frame was moved in preview, long screenshot capture starts from the moved capture area instead of the original selected position.
 
 Long screenshots are intended for scrollable pages, documents, PDFs, and chat histories. Results may vary depending on the target application's scrolling behavior, rendering speed, and repeated content.
 
