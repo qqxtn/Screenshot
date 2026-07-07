@@ -467,7 +467,7 @@ public sealed class CapturePreview : Form {
         int buttonWidth = 42;
         int buttonHeight = 34;
         int gap = 6;
-        int buttonCount = showLongButton ? 10 : 9;
+        int buttonCount = showLongButton ? 11 : 10;
         int totalWidth = buttonWidth * buttonCount + gap * (buttonCount - 1);
         int maxPreviewWidth = Math.Max(120, screen.Width - 32 - borderSize * 2);
         int maxPreviewHeight = Math.Max(120, screen.Height - toolbarHeight - 32 - borderSize * 2);
@@ -548,13 +548,18 @@ public sealed class CapturePreview : Form {
             ShowColorPalette(previewToolbar, left + (buttonWidth + gap) * 4, buttonWidth);
         });
 
-        AddButton(previewToolbar, "ocr", left + (buttonWidth + gap) * 5, buttonWidth, buttonHeight, "Extract text", delegate {
+        AddButton(previewToolbar, "mosaic", left + (buttonWidth + gap) * 5, buttonWidth, buttonHeight, "Mosaic", delegate {
+            drawMode = drawMode == "mosaic" ? null : "mosaic";
+            HideColorPalette();
+        });
+
+        AddButton(previewToolbar, "ocr", left + (buttonWidth + gap) * 6, buttonWidth, buttonHeight, "Extract text", delegate {
             ExtractTextRequested = true;
             DialogResult = DialogResult.Retry;
             Close();
         });
 
-        int index = 6;
+        int index = 7;
         if (showLongButton) {
             AddButton(previewToolbar, "long", left + (buttonWidth + gap) * index, buttonWidth, buttonHeight, "Long screenshot", delegate {
                 LongScreenshotRequested = true;
@@ -831,7 +836,8 @@ public sealed class CapturePreview : Form {
             return;
         }
 
-        drawCurrent = ClampPreviewPoint(e.Location);
+        Point nextPoint = ClampPreviewPoint(e.Location);
+        drawCurrent = nextPoint;
         picture.Invalidate();
     }
 
@@ -846,13 +852,39 @@ public sealed class CapturePreview : Form {
         }
 
         drawing = false;
-        drawCurrent = ClampPreviewPoint(e.Location);
+        Point endPoint = ClampPreviewPoint(e.Location);
+        if (drawMode == "mosaic") {
+            drawCurrent = endPoint;
+            Rectangle mosaicRect = GetPreviewRectangle(drawStart, drawCurrent);
+            if (mosaicRect.Width >= 3 && mosaicRect.Height >= 3) {
+                PushUndoState();
+                ApplyMosaicRectangle(PreviewToImageRectangle(mosaicRect));
+            }
+            picture.Invalidate();
+            return;
+        }
+
+        drawCurrent = endPoint;
         CommitShape();
         picture.Invalidate();
     }
 
     private void PicturePaint(object sender, PaintEventArgs e) {
         if (!drawing || String.IsNullOrEmpty(drawMode)) {
+            return;
+        }
+
+        if (drawMode == "mosaic") {
+            Rectangle mosaicRect = GetPreviewRectangle(drawStart, drawCurrent);
+            if (mosaicRect.Width >= 2 && mosaicRect.Height >= 2) {
+                using (Brush overlay = new SolidBrush(Color.FromArgb(36, 51, 65, 85))) {
+                    e.Graphics.FillRectangle(overlay, mosaicRect);
+                }
+                using (Pen border = new Pen(Color.FromArgb(71, 85, 105), 1)) {
+                    border.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+                    e.Graphics.DrawRectangle(border, mosaicRect);
+                }
+            }
             return;
         }
 
@@ -881,6 +913,53 @@ public sealed class CapturePreview : Form {
                 }
             }
         }
+    }
+
+    private void ApplyMosaicRectangle(Rectangle area) {
+        if (area.Width <= 0 || area.Height <= 0) {
+            return;
+        }
+
+        int blockSize = Math.Max(8, (int)Math.Round(12.0 / Math.Max(0.25, previewScale)));
+        using (Bitmap source = (Bitmap)previewImage.Clone()) {
+            using (Graphics g = Graphics.FromImage(previewImage)) {
+                g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                for (int y = area.Top; y < area.Bottom; y += blockSize) {
+                    for (int x = area.Left; x < area.Right; x += blockSize) {
+                        int width = Math.Min(blockSize, area.Right - x);
+                        int height = Math.Min(blockSize, area.Bottom - y);
+                        Color color = GetAverageBlockColor(source, x, y, width, height);
+                        using (Brush brush = new SolidBrush(color)) {
+                            g.FillRectangle(brush, x, y, width, height);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private Color GetAverageBlockColor(Bitmap source, int left, int top, int width, int height) {
+        long red = 0;
+        long green = 0;
+        long blue = 0;
+        long alpha = 0;
+        int count = 0;
+        int step = Math.Max(1, Math.Min(width, height) / 4);
+        for (int y = top; y < top + height; y += step) {
+            for (int x = left; x < left + width; x += step) {
+                Color pixel = source.GetPixel(x, y);
+                alpha += pixel.A;
+                red += pixel.R;
+                green += pixel.G;
+                blue += pixel.B;
+                count++;
+            }
+        }
+
+        if (count == 0) {
+            return Color.Transparent;
+        }
+        return Color.FromArgb((int)(alpha / count), (int)(red / count), (int)(green / count), (int)(blue / count));
     }
 
     private void CommitShape() {
@@ -1907,6 +1986,9 @@ public sealed class PrettyButton : Button {
         else if (IconKind == "rect" || IconKind == "ellipse" || IconKind == "arrow" || IconKind == "text") {
             iconColor = Color.FromArgb(239, 68, 68);
         }
+        else if (IconKind == "mosaic") {
+            iconColor = Color.FromArgb(71, 85, 105);
+        }
         else if (IconKind.StartsWith("color-")) {
             iconColor = GetSwatchColor(IconKind);
         }
@@ -1946,6 +2028,9 @@ public sealed class PrettyButton : Button {
                     TextRenderer.DrawText(graphics, "T", font, textRect, iconColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 }
             }
+            else if (IconKind == "mosaic") {
+                DrawMosaicIcon(graphics, iconColor, cx, cy);
+            }
             else if (IconKind == "long") {
                 DrawLongIcon(graphics, pen, cx, cy);
             }
@@ -1963,6 +2048,23 @@ public sealed class PrettyButton : Button {
                     new Point(cx + 9, cy - 7)
                 });
             }
+        }
+    }
+
+    private void DrawMosaicIcon(Graphics graphics, Color color, int cx, int cy) {
+        int size = 6;
+        using (Brush strong = new SolidBrush(color)) {
+            graphics.FillRectangle(strong, cx - 9, cy - 9, size, size);
+            graphics.FillRectangle(strong, cx + 3, cy - 9, size, size);
+            graphics.FillRectangle(strong, cx - 3, cy - 3, size, size);
+            graphics.FillRectangle(strong, cx - 9, cy + 3, size, size);
+            graphics.FillRectangle(strong, cx + 3, cy + 3, size, size);
+        }
+        using (Brush light = new SolidBrush(Color.FromArgb(120, color))) {
+            graphics.FillRectangle(light, cx - 3, cy - 9, size, size);
+            graphics.FillRectangle(light, cx - 9, cy - 3, size, size);
+            graphics.FillRectangle(light, cx + 3, cy - 3, size, size);
+            graphics.FillRectangle(light, cx - 3, cy + 3, size, size);
         }
     }
 

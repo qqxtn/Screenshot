@@ -15,7 +15,7 @@
 - 框选完成进入预览后，未编辑前可拖动截图框调整截图范围
 - 长截图会使用移动后的截图框位置继续向下截图
 - 支持撤销上一步标注
-- 支持矩形、椭圆、箭头和文字标注
+- 支持矩形、椭圆、箭头、文字和马赛克标注
 - 选择标注工具后，可在按钮上方弹出的竖向颜色面板中选择颜色
 - 文字标注支持中文输入，按 `Ctrl + Enter` 提交，按 `Esc` 取消
 - 支持复制截图到剪贴板
@@ -50,6 +50,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Screenshot.ps1
 - 椭圆标注
 - 箭头标注
 - 文字标注
+- 矩形马赛克
 - OCR 文字识别
 - 长截图
 - 保存到本地
@@ -69,6 +70,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Screenshot.ps1
 - 矩形和椭圆：按住鼠标拖拽绘制。
 - 箭头：从起点拖拽到终点绘制。
 - 文字：点击文字按钮后，在图片上点击需要输入的位置。
+- 马赛克：点击马赛克按钮后，按住鼠标拖拽框选区域；竖向距离决定宽度，横向距离决定长度，松开后生成矩形马赛克。
 - 撤销：点击撤销按钮可回退上一步标注，最多保留 20 步。
 
 文字输入时，按 `Ctrl + Enter` 提交文字，点击其他位置也会提交文字，按 `Esc` 会取消当前输入。
@@ -127,7 +129,7 @@ OCR 使用 Windows 内置 OCR 引擎。识别效果取决于图片清晰度、�
 - Move the screenshot frame before editing to adjust the capture area
 - Long screenshots use the moved screenshot frame position
 - Undo the previous annotation step
-- Rectangle, ellipse, arrow, and text annotations
+- Rectangle, ellipse, arrow, text, and mosaic annotations
 - Popup vertical color picker after selecting an annotation tool
 - Text annotations support IME input; press `Ctrl + Enter` to commit and `Esc` to cancel
 - Copy screenshots to the clipboard
@@ -162,6 +164,7 @@ After selecting an area, the preview toolbar includes:
 - Ellipse annotation
 - Arrow annotation
 - Text annotation
+- Rectangular mosaic
 - OCR text extraction
 - Long screenshot
 - Save locally
@@ -181,6 +184,7 @@ While moving the frame, the app updates the frame content from the full desktop 
 - Rectangle and ellipse: drag to draw.
 - Arrow: drag from the start point to the end point.
 - Text: click the text button, then click the screenshot where the text should be placed.
+- Mosaic: click the mosaic button and drag to select an area. The vertical distance sets its width and the horizontal distance sets its length; release to apply the rectangular mosaic.
 - Undo: click the undo button to revert the previous annotation step. Up to 20 steps are kept.
 
 For text input, press `Ctrl + Enter` to commit text, click elsewhere to commit text, or press `Esc` to cancel the current input.
