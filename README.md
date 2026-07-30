@@ -24,6 +24,7 @@
 - 支持 Windows 100%、125%、150%、175%、200% 等显示缩放比例
 - 支持多显示器 Per-Monitor V2 DPI 感知，避免截图背景放大和框选偏移
 - 独立版 `Run-Screenshot.exe` 运行时不再弹出命令行窗口
+- 独立版静默处理取消、复制、保存等状态，不弹出额外消息框
 - 程序常驻系统托盘，托盘图标和截图热键由同一进程管理
 - 独立版内嵌脚本和应用图标，运行时不依赖 `Screenshot.ps1`
 
@@ -141,6 +142,7 @@ OCR 使用 Windows 内置 OCR 引擎。识别效果取决于图片清晰度、�
 - Supports Windows display scaling at 100%, 125%, 150%, 175%, 200%, and other ratios
 - Uses Per-Monitor V2 DPI awareness to prevent zoomed capture backgrounds and selection offsets
 - Standalone `Run-Screenshot.exe` runs without opening a command prompt
+- The standalone executable handles cancel, copy, save, and other status messages silently
 - The app stays in the system tray; the tray icon and screenshot hotkey are managed by the same process
 - Standalone executable embeds the script and application icon; it does not require `Screenshot.ps1` at runtime
 
