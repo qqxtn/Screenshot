@@ -21,6 +21,8 @@
 - 支持复制截图到剪贴板
 - 支持保存为 PNG 图片
 - 长图预览会自动缩放，确保底部按钮可见
+- 支持 Windows 100%、125%、150%、175%、200% 等显示缩放比例
+- 支持多显示器 Per-Monitor V2 DPI 感知，避免截图背景放大和框选偏移
 - 独立版 `Run-Screenshot.exe` 运行时不再弹出命令行窗口
 - 程序常驻系统托盘，托盘图标和截图热键由同一进程管理
 - 独立版内嵌脚本和应用图标，运行时不依赖 `Screenshot.ps1`
@@ -106,6 +108,7 @@ OCR 使用 Windows 内置 OCR 引擎。识别效果取决于图片清晰度、�
 ### 文件说明
 
 - `Run-Screenshot.exe`：独立版程序，内嵌脚本和图标，运行时不依赖 `Screenshot.ps1`
+- `Run-Screenshot.exe.config`：独立版程序的 Per-Monitor V2 DPI 配置
 - `Screenshot.ps1`：主脚本，适合开发和调试
 - `Run-Screenshot.cmd`：脚本启动器
 - `README.md`：项目说明文档
@@ -135,6 +138,8 @@ OCR 使用 Windows 内置 OCR 引擎。识别效果取决于图片清晰度、�
 - Copy screenshots to the clipboard
 - Save screenshots as PNG images
 - Large previews are scaled so action buttons remain visible
+- Supports Windows display scaling at 100%, 125%, 150%, 175%, 200%, and other ratios
+- Uses Per-Monitor V2 DPI awareness to prevent zoomed capture backgrounds and selection offsets
 - Standalone `Run-Screenshot.exe` runs without opening a command prompt
 - The app stays in the system tray; the tray icon and screenshot hotkey are managed by the same process
 - Standalone executable embeds the script and application icon; it does not require `Screenshot.ps1` at runtime
@@ -220,6 +225,7 @@ OCR uses the built-in Windows OCR engine. Accuracy depends on image clarity, fon
 ### Files
 
 - `Run-Screenshot.exe`: standalone app with embedded script and icon; does not require `Screenshot.ps1` at runtime
+- `Run-Screenshot.exe.config`: Per-Monitor V2 DPI configuration for the standalone executable
 - `Screenshot.ps1`: main script for development and debugging
 - `Run-Screenshot.cmd`: script launcher
 - `README.md`: project documentation

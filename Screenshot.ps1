@@ -15,6 +15,16 @@ using System.Windows.Forms;
 
 public static class HotkeyNative {
     public const int WM_HOTKEY = 0x0312;
+    private static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new IntPtr(-4);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
+
+    [DllImport("shcore.dll")]
+    private static extern int SetProcessDpiAwareness(int awareness);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetProcessDPIAware();
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT {
@@ -91,6 +101,30 @@ public static class HotkeyNative {
         return new IntPtr(delta << 16);
     }
 
+    public static void EnableDpiAwareness() {
+        try {
+            if (SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+                return;
+            }
+        }
+        catch (EntryPointNotFoundException) {
+        }
+        catch (DllNotFoundException) {
+        }
+
+        try {
+            if (SetProcessDpiAwareness(2) == 0) {
+                return;
+            }
+        }
+        catch (EntryPointNotFoundException) {
+        }
+        catch (DllNotFoundException) {
+        }
+
+        SetProcessDPIAware();
+    }
+
 }
 
 public sealed class ScreenSelector : Form {
@@ -111,6 +145,7 @@ public sealed class ScreenSelector : Form {
     public Point PreviewLocation { get; private set; }
 
     public ScreenSelector(string outputDir) {
+        AutoScaleMode = AutoScaleMode.None;
         this.outputDir = outputDir;
         this.virtualScreen = SystemInformation.VirtualScreen;
         this.desktop = new Bitmap(virtualScreen.Width, virtualScreen.Height);
@@ -434,6 +469,7 @@ public sealed class CapturePreview : Form {
     }
 
     public CapturePreview(string imagePath, string outputDir, Point location, bool showLongButton, Rectangle captureBounds, string backgroundPath) {
+        AutoScaleMode = AutoScaleMode.None;
         this.imagePath = imagePath;
         this.outputDir = outputDir;
         this.previewLocation = location;
@@ -1200,6 +1236,7 @@ public sealed class LongScreenshotSession : Form {
     public Point PreviewLocation { get; private set; }
 
     public LongScreenshotSession(Rectangle captureBounds, string outputDir) {
+        AutoScaleMode = AutoScaleMode.None;
         this.captureBounds = captureBounds;
         this.outputDir = outputDir;
         Action = "Cancel";
@@ -1870,6 +1907,7 @@ public sealed class LongCaptureBorder : Form {
     private readonly int thickness = 2;
 
     public LongCaptureBorder(Rectangle captureBounds) {
+        AutoScaleMode = AutoScaleMode.None;
         StartPosition = FormStartPosition.Manual;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -2272,6 +2310,7 @@ public sealed class ColorPalettePanel : Control {
 
 public sealed class OcrTextWindow : Form {
     public OcrTextWindow(string text) {
+        AutoScaleMode = AutoScaleMode.None;
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(560, 360);
         Text = "Screenshot OCR";
@@ -2312,6 +2351,7 @@ public sealed class OcrTextWindow : Form {
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -TypeDefinition $signature -ReferencedAssemblies System.Drawing,System.Windows.Forms
+[HotkeyNative]::EnableDpiAwareness()
 
 function Wait-WinRtAsync {
     param(
